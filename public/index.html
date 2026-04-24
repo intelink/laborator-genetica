@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Laborator Genetica · Molecular Bench</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="logo"></div>
+      <div>
+        <h1><span class="accent">GENETICA</span> · LAB</h1>
+        <div class="tag">transcriere · traducere · crispr · restrictie · pcr · gel</div>
+      </div>
+    </div>
+    <div class="tag" id="health">conectare...</div>
+  </header>
+
+  <div class="grid">
+
+    <!-- LEFT: tools & presets -->
+    <aside>
+      <div class="card">
+        <h2>⎈ preset-uri <span class="bar"></span></h2>
+        <select id="presetSel"></select>
+        <button class="btn" id="btnLoadPreset" style="margin-top:8px;width:100%">Incarca</button>
+        <div class="hint" id="presetDesc" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <h2>✎ editare <span class="bar"></span></h2>
+        <label>secventa ADN (A/T/G/C)</label>
+        <textarea id="seqInput" rows="4" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="btnSet">▶ seteaza</button>
+          <button class="btn-ghost" id="btnClear">goleste</button>
+          <button class="btn-ghost" id="btnRandom">↝ random 60bp</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>⚙ instrumente <span class="bar"></span></h2>
+        <div class="tool-grid">
+          <button class="btn-ghost" data-tool="transcribe">📜 Transcrie → ARN</button>
+          <button class="btn-ghost" data-tool="translate">🧬 Tradu → Proteina</button>
+          <button class="btn-ghost" data-tool="mutate">✦ Mutatie punctuala</button>
+          <button class="btn-ghost" data-tool="crispr">✂ CRISPR / Cas9</button>
+          <button class="btn-ghost" data-tool="restriction">⎯⎯| Enzima restrictie</button>
+          <button class="btn-ghost" data-tool="pcr">⚡ PCR (amplifica)</button>
+          <button class="btn-ghost" data-tool="gel">▤ Gel electroforeza</button>
+          <button class="btn-ghost" data-tool="complement">⟳ Complement invers</button>
+          <button class="btn-danger" id="btnReset">⟲ Reset laborator</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>☷ legenda AA <span class="bar"></span></h2>
+        <div class="mini-legend">
+          <span class="lg" style="color:var(--aa-nonpolar)">nonpolar</span>
+          <span class="lg" style="color:var(--aa-polar)">polar</span>
+          <span class="lg" style="color:var(--aa-acid)">acid</span>
+          <span class="lg" style="color:var(--aa-basic)">bazic</span>
+          <span class="lg" style="color:var(--aa-aromatic)">aromatic</span>
+          <span class="lg" style="color:var(--aa-special)">special/M</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- RIGHT: workspace -->
+    <section>
+
+      <div class="card">
+        <h2>🧬 ADN activ <span class="bar"></span></h2>
+        <div class="stats">
+          <div class="stat"><div class="lab">lungime</div><div class="val" id="statLen">0 bp</div></div>
+          <div class="stat cyan"><div class="lab">GC content</div><div class="val" id="statGC">—</div></div>
+          <div class="stat mag"><div class="lab">ORF start</div><div class="val" id="statORF">—</div></div>
+          <div class="stat ye"><div class="lab">proteina</div><div class="val" id="statAA">— AA</div></div>
+        </div>
+        <div class="dna-viewer" id="dnaView">
+          <div class="hint">Incarca o secventa preset sau lipeste una proprie.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>📜 ARN mesager <span class="bar"></span></h2>
+        <div class="rna-view" id="rnaView"><span class="hint">apasa "Transcrie"</span></div>
+      </div>
+
+      <div class="card">
+        <h2>🧪 proteina <span class="bar"></span></h2>
+        <div class="prot-view" id="protView"><span class="hint">apasa "Tradu" (sau incarca preset)</span></div>
+        <div id="mutSummary"></div>
+      </div>
+
+      <div class="card" id="gelCard" style="display:none">
+        <h2>▤ gel electroforeza <span class="bar"></span></h2>
+        <div class="gel-wrap">
+          <div class="gel-lane" id="gelLane">
+            <div class="gel-top"></div>
+          </div>
+          <div class="gel-ladder" id="gelLadder"></div>
+        </div>
+        <div class="hint" style="margin-top:8px">Fragmente mici migreaza mai departe (jos). Ruleaza dupa o taiere cu enzima sau PCR.</div>
+      </div>
+
+      <div class="card">
+        <h2>◉ jurnal <span class="bar"></span></h2>
+        <div class="log" id="log"></div>
+      </div>
+
+    </section>
+  </div>
+
+  <div class="footer">
+    <span>LABORATOR GENETICA</span><span class="sep">·</span>
+    <span id="footMeta">ready</span><span class="sep">·</span>
+    <a href="/health" style="color:var(--dim);text-decoration:none">/health</a>
+  </div>
+</div>
+
+<!-- Modals -->
+<div class="modal-bg" id="modal">
+  <div class="modal" id="modalBody"></div>
+</div>
+
+<script src="/js/data.js"></script>
+<script src="/js/bio.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

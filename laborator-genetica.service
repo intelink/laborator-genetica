@@ -1,0 +1,19 @@
+[Unit]
+Description=Laborator Virtual de Genetica Moleculara
+After=network.target
+
+[Service]
+Type=simple
+User=eae
+Group=eae
+WorkingDirectory=/home/eae/Documents/laborator_genetica
+ExecStart=/home/eae/Documents/laborator_genetica/.venv/bin/python /home/eae/Documents/laborator_genetica/server.py
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/home/eae/Documents/laborator_genetica/server.log
+StandardError=append:/home/eae/Documents/laborator_genetica/server.log
+Environment=HOME=/home/eae
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
