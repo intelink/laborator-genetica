@@ -1,4 +1,5 @@
 // === UI + workflow ===
+(function(){
 const $=id=>document.getElementById(id);
 const BIO = window.GeneticaBio;
 const { CODON_TABLE, AA_INFO, RESTRICTION_ENZYMES, PRESET_GENES } = window.GeneticaData;
@@ -440,3 +441,5 @@ window.applyPcr = applyPcr;
 initPresets();
 renderAll();
 logEvt('laborator pornit. incarca un preset sau lipeste o secventa.', 'info');
+
+})();

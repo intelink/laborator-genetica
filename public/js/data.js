@@ -1,4 +1,5 @@
 // === DATE STATICE: cod genetic, enzime, secvente preset ===
+(function(){
 
 // Codon table (DNA sense strand, T not U). Stop = *
 const CODON_TABLE = {
@@ -102,3 +103,5 @@ const PRESET_GENES = {
 
 // Export global
 window.GeneticaData = { CODON_TABLE, AA_INFO, RESTRICTION_ENZYMES, PRESET_GENES };
+
+})();

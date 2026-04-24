@@ -1,5 +1,6 @@
 // === LOGICA MOLECULARA ===
 // Toate functiile lucreaza pe siruri ADN (A/T/G/C). ARN = inlocuieste T cu U.
+(function(){
 
 const { CODON_TABLE, AA_INFO, RESTRICTION_ENZYMES } = window.GeneticaData;
 
@@ -180,3 +181,5 @@ window.GeneticaBio = {
   cutWithEnzyme, pointMutation, indel,
   classifyMutation, crisprCut, pcr, gelBands,
 };
+
+})();
