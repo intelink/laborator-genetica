@@ -32,6 +32,26 @@
       </div>
 
       <div class="card">
+        <h2>🌐 UCSC Genome <span class="bar"></span></h2>
+        <label>simbol gena (ex: HBB, BRCA1, TP53, INS)</label>
+        <input type="text" id="ucscGene" value="HBB" spellcheck="false" style="width:100%;background:#0a1318;color:var(--txt);border:1px solid var(--panel-brd);border-radius:6px;padding:6px 8px;font-family:var(--mono);margin-top:4px">
+        <label style="margin-top:10px">organism</label>
+        <select id="ucscGenome">
+          <option value="hg38">Human (hg38)</option>
+          <option value="mm39">Mouse (mm39)</option>
+          <option value="rn7">Rat (rn7)</option>
+          <option value="danRer11">Zebrafish (danRer11)</option>
+          <option value="dm6">Drosophila (dm6)</option>
+          <option value="ce11">C. elegans (ce11)</option>
+          <option value="sacCer3">Yeast (sacCer3)</option>
+        </select>
+        <label style="margin-top:10px">max lungime secventa (bp)</label>
+        <input type="number" id="ucscMaxLen" value="500" min="30" max="10000" style="width:100%;background:#0a1318;color:var(--txt);border:1px solid var(--panel-brd);border-radius:6px;padding:6px 8px;font-family:var(--mono)">
+        <button class="btn" id="btnFetchUCSC" style="margin-top:10px;width:100%">⬇ Descarca din UCSC</button>
+        <div class="hint" id="ucscStatus" style="margin-top:8px;word-break:break-word">Trage secvente reale direct de la genome.ucsc.edu (genomic, cu introni).</div>
+      </div>
+
+      <div class="card">
         <h2>✎ editare <span class="bar"></span></h2>
         <label>secventa ADN (A/T/G/C)</label>
         <textarea id="seqInput" rows="4" spellcheck="false"></textarea>

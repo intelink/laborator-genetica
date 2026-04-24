@@ -437,6 +437,87 @@ window.applyCrispr = applyCrispr;
 window.applyRestriction = applyRestriction;
 window.applyPcr = applyPcr;
 
+// ---------- UCSC Genome Browser ----------
+// API-ul public UCSC (CORS enabled). Doc: https://genome.ucsc.edu/goldenPath/help/api.html
+// Flow: search (symbol) -> extrage pozitie genomica -> getData/sequence -> ADN
+const UCSC_API = 'https://api.genome.ucsc.edu';
+
+async function fetchFromUCSC(){
+  const symbol = $("ucscGene").value.trim();
+  const genome = $("ucscGenome").value;
+  const maxLen = Math.max(30, Math.min(10000, parseInt($("ucscMaxLen").value, 10) || 500));
+  if (!symbol){
+    $("ucscStatus").textContent = 'introdu un simbol de gena';
+    logEvt('UCSC: simbol gol', 'err');
+    return;
+  }
+  $("ucscStatus").textContent = `caut ${symbol} in ${genome}...`;
+  try {
+    // 1. Search pentru gena (raspunsul vine pe categorii de tracks)
+    const sUrl = `${UCSC_API}/search?search=${encodeURIComponent(symbol)};genome=${genome}`;
+    const sRes = await fetch(sUrl).then(r => r.json());
+    const categories = sRes.positionMatches || [];
+    // prefer: knownGene > mane > ncbiRefSeq* > orice gene-related
+    const priority = ['knownGene', 'mane', 'ncbiRefSeqCurated', 'ncbiRefSeq', 'refGene', 'hgnc'];
+    let hit = null;
+    for (const p of priority){
+      const cat = categories.find(c => (c.name||c.trackName) === p);
+      if (cat && cat.matches && cat.matches.length){
+        // caut un match al carui posName e chiar simbolul (case-insensitive)
+        const exact = cat.matches.find(m =>
+          (m.posName||'').split(/[\s(]/)[0].toUpperCase() === symbol.toUpperCase()
+        );
+        hit = exact || cat.matches[0];
+        if (hit){ hit._track = p; break; }
+      }
+    }
+    if (!hit){
+      // fallback: orice match din orice categorie
+      for (const c of categories){
+        if (c.matches && c.matches.length){ hit = c.matches[0]; hit._track = c.name||c.trackName; break; }
+      }
+    }
+    if (!hit){
+      $("ucscStatus").textContent = `negasit: ${symbol} in ${genome}`;
+      logEvt(`UCSC: ${symbol} nu exista in ${genome}`, 'err');
+      return;
+    }
+    const posMatch = (hit.position||'').match(/^([^:]+):(\d+)-(\d+)$/);
+    if (!posMatch){
+      $("ucscStatus").textContent = `pozitie invalida: ${hit.position}`;
+      return;
+    }
+    const chrom = posMatch[1];
+    const startG = parseInt(posMatch[2], 10);
+    const endG   = parseInt(posMatch[3], 10);
+    const geneLen = endG - startG;
+    const fetchEnd = Math.min(endG, startG + maxLen);
+    // 2. Fetch secventa
+    const qUrl = `${UCSC_API}/getData/sequence?genome=${genome};chrom=${chrom};start=${startG};end=${fetchEnd}`;
+    $("ucscStatus").textContent = `descarc ${chrom}:${startG}-${fetchEnd}...`;
+    const qRes = await fetch(qUrl).then(r => r.json());
+    const dna = (qRes.dna||'').toUpperCase();
+    if (!dna){
+      $("ucscStatus").textContent = 'secventa goala de la UCSC';
+      return;
+    }
+    const truncNote = (fetchEnd < endG) ? ` (trunchiat la ${maxLen} bp din ${geneLen})` : '';
+    $("ucscStatus").innerHTML =
+      `<b>${esc(hit.posName||symbol)}</b><br>` +
+      `<span style="color:var(--dim)">${esc(hit.description||'')}</span><br>` +
+      `${chrom}:${startG.toLocaleString()}-${fetchEnd.toLocaleString()} ` +
+      `(${dna.length} bp${truncNote})<br>` +
+      `track: ${hit._track}`;
+    setSequence(dna, `UCSC ${symbol} (${genome}) ${chrom}:${startG}-${fetchEnd}`, 'ok');
+    logEvt(`UCSC ${symbol}/${genome}: ${dna.length} bp din ${chrom}:${startG}-${fetchEnd}`, 'ok');
+  } catch(e) {
+    $("ucscStatus").textContent = 'eroare: ' + e.message;
+    logEvt('UCSC eroare: ' + e.message, 'err');
+  }
+}
+$("btnFetchUCSC").addEventListener("click", fetchFromUCSC);
+$("ucscGene").addEventListener("keydown", e => { if (e.key === 'Enter') fetchFromUCSC(); });
+
 // ---------- init ----------
 initPresets();
 renderAll();
