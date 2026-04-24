@@ -36,20 +36,33 @@ sudo systemctl enable --now laborator-genetica.service
 - **Gel de electroforeză** (vizualizare mobilitate relativă)
 - **UCSC Genome Browser** (încarcă gene reale direct din baza de date publică)
 
-## Integrare UCSC Genome Browser
+## Integrări cu baze de date publice
 
-Cardul "🌐 UCSC Genome" permite descărcarea de secvențe reale din baza de date UCSC (https://genome.ucsc.edu/), direct din browser via API-ul lor public cu CORS (`https://api.genome.ucsc.edu/`).
+Laboratorul are două carduri de import de secvențe reale, complementare:
 
-Cum funcționează:
-1. Introduci simbolul genei (ex. `HBB`, `BRCA1`, `TP53`, `INS`)
-2. Alegi organismul (human hg38, mouse mm39, rat, zebrafish, Drosophila, C. elegans, yeast)
-3. Alegi lungimea maximă (implicit 500 bp, util pentru că multe gene au zeci de kb cu introni)
-4. Apeși "Descarcă" → face 2 request-uri la UCSC:
-   - `search` — găsește pozițiile în genom pentru simbol (preferă `knownGene` > `mane` > `ncbiRefSeqCurated`)
-   - `getData/sequence` — descarcă secvența din acele coordonate
-5. Secvența se încarcă automat ca ADN activ → toate instrumentele (transcriere, CRISPR, restricție, PCR, gel) funcționează pe ea
+### 🌐 UCSC Genome Browser → secvențe **genomice**
 
-Observații importante:
-- Secvența e **genomică** (include introni, UTR-uri). Pentru CDS pur (fără introni) e nevoie de integrare adițională cu NCBI sau Ensembl.
-- Dacă gena e pe firul minus (ex. multe gene umane), secvența vine ca firul sens al cromozomului — folosește "Complement invers" pentru a obține sensul transcris.
-- Tot traficul merge direct browser → UCSC, serverul Flask NU intermediază.
+API: `https://api.genome.ucsc.edu/` (CORS activat → client-side).
+
+- Introduci simbolul genei + organism (hg38, mm39, rn7, danRer11, dm6, ce11, sacCer3) + lungime max
+- Flow: `search` → coordonate genomice → `getData/sequence` → ADN
+- Rezultat: **ADN genomic brut** (include introni + UTR + regiuni flancante)
+- Bun pentru: studiul introni/exoni, promotori, regiuni non-coding, site-uri de restricție în context genomic
+- Track-uri preferate (în ordine): `knownGene`, `mane`, `ncbiRefSeqCurated`
+
+### 🧪 NCBI RefSeq → secvențe **mRNA / CDS**
+
+API: `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/` (CORS activat → client-side).
+
+- Introduci simbolul + organism (human, mouse, rat, zebrafish, fly, c.elegans, yeast, e.coli, arabidopsis) + tip
+- Tip `CDS`: doar secvența codantă (ATG...stop) — direct traducibilă
+- Tip `mRNA`: transcript complet cu UTR-uri 5' și 3'
+- Flow: `esearch` cu filtru `refseq_select[filter]` → accession canonic → `efetch` FASTA
+- Rezultat: secvență **procesată** (fără introni, spliced) — perfect pentru traducere la proteină
+- Bun pentru: traducere ADN → proteină direct, studiul CDS, comparație mRNA vs. CDS
+
+### Cum le folosești complementar
+- **UCSC** → vezi gena în context genomic, găsește enzime de restricție care taie în introni vs. exoni
+- **NCBI (CDS)** → încarcă CDS-ul aceleiași gene, apasă "Tradu" → obții proteina fără probleme de cadru de citire
+
+Ambele rulează exclusiv în browser (zero trafic prin serverul Flask).

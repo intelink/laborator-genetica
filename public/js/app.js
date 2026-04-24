@@ -518,6 +518,88 @@ async function fetchFromUCSC(){
 $("btnFetchUCSC").addEventListener("click", fetchFromUCSC);
 $("ucscGene").addEventListener("keydown", e => { if (e.key === 'Enter') fetchFromUCSC(); });
 
+// ---------- NCBI Entrez (eutils) ----------
+// Doc: https://www.ncbi.nlm.nih.gov/books/NBK25500/
+// Flow: esearch (gaseste accession id pe nuccore RefSeq) -> efetch (FASTA)
+// mRNA  -> rettype=fasta         (FASTA complet, cu UTR)
+// CDS   -> rettype=fasta_cds_na  (extrage doar CDS din annotarea mRNA)
+const NCBI_API = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
+
+function parseFasta(text){
+  // ia primul record din FASTA multi-record. Returneaza {header, seq}
+  if (!text) return { header: '', seq: '' };
+  const lines = text.split(/\r?\n/);
+  const records = [];
+  let cur = null;
+  for (const line of lines){
+    if (line.startsWith('>')){
+      if (cur) records.push(cur);
+      cur = { header: line.slice(1), seq: '' };
+    } else if (cur){
+      cur.seq += line.trim();
+    }
+  }
+  if (cur) records.push(cur);
+  return records[0] || { header: '', seq: '' };
+}
+
+async function fetchFromNCBI(){
+  const symbol = $("ncbiGene").value.trim();
+  const org    = $("ncbiOrg").value;
+  const kind   = $("ncbiType").value;  // 'cds' | 'mrna'
+  if (!symbol){
+    $("ncbiStatus").textContent = 'introdu un simbol de gena';
+    logEvt('NCBI: simbol gol', 'err');
+    return;
+  }
+  $("ncbiStatus").textContent = `caut ${symbol} in ${org} (RefSeq)...`;
+  try {
+    // 1. esearch pe nuccore cu filtru RefSeq select (un singur transcript canonic)
+    const term = `${symbol}[Gene Name] AND ${org}[orgn] AND refseq_select[filter]`;
+    const sUrl = `${NCBI_API}/esearch.fcgi?db=nuccore&term=${encodeURIComponent(term)}&retmode=json&retmax=1`;
+    const sRes = await fetch(sUrl).then(r => r.json());
+    let ids = (sRes.esearchresult && sRes.esearchresult.idlist) || [];
+
+    // fallback: fara refseq_select (e.g. E. coli nu-l are)
+    if (!ids.length){
+      const term2 = `${symbol}[Gene Name] AND ${org}[orgn] AND refseq[filter] AND biomol_mrna[PROP]`;
+      const sUrl2 = `${NCBI_API}/esearch.fcgi?db=nuccore&term=${encodeURIComponent(term2)}&retmode=json&retmax=1`;
+      const sRes2 = await fetch(sUrl2).then(r => r.json());
+      ids = (sRes2.esearchresult && sRes2.esearchresult.idlist) || [];
+    }
+    if (!ids.length){
+      $("ncbiStatus").textContent = `negasit: ${symbol} in ${org}`;
+      logEvt(`NCBI: ${symbol}/${org} nu are inregistrare RefSeq`, 'err');
+      return;
+    }
+    const id = ids[0];
+    const rettype = kind === 'cds' ? 'fasta_cds_na' : 'fasta';
+    const fUrl = `${NCBI_API}/efetch.fcgi?db=nuccore&id=${id}&rettype=${rettype}&retmode=text`;
+    $("ncbiStatus").textContent = `descarc ${rettype} pentru accession ${id}...`;
+    const fasta = await fetch(fUrl).then(r => r.text());
+    const rec = parseFasta(fasta);
+    const dna = rec.seq.toUpperCase().replace(/[^ATGC]/g, '');
+    if (!dna){
+      $("ncbiStatus").textContent = 'secventa goala / non-ATGC';
+      return;
+    }
+    // extrage accession din header pentru label
+    const accMatch = rec.header.match(/^(\S+)/);
+    const acc = accMatch ? accMatch[1] : id;
+    $("ncbiStatus").innerHTML =
+      `<b>${esc(symbol)}</b> (${esc(org)})<br>` +
+      `<span style="color:var(--dim)">${esc(rec.header.slice(0, 140))}</span><br>` +
+      `${dna.length} bp · tip: ${kind.toUpperCase()} · acc: ${esc(acc)}`;
+    setSequence(dna, `NCBI ${kind.toUpperCase()} ${symbol} (${org}) ${acc}`, 'ok');
+    logEvt(`NCBI ${kind} ${symbol}/${org}: ${dna.length} bp (${acc})`, 'ok');
+  } catch(e){
+    $("ncbiStatus").textContent = 'eroare: ' + e.message;
+    logEvt('NCBI eroare: ' + e.message, 'err');
+  }
+}
+$("btnFetchNCBI").addEventListener("click", fetchFromNCBI);
+$("ncbiGene").addEventListener("keydown", e => { if (e.key === 'Enter') fetchFromNCBI(); });
+
 // ---------- init ----------
 initPresets();
 renderAll();
