@@ -7,19 +7,52 @@
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+
+<!-- animated background -->
+<canvas id="bgParticles"></canvas>
+
 <div class="wrap">
 
-  <header>
+  <header class="holo-header">
     <div class="brand">
       <div class="logo"></div>
       <div>
         <h1><span class="accent">GENETICA</span> · LAB</h1>
-        <div class="tag">transcriere · traducere · crispr · restrictie · pcr · gel</div>
+        <div class="tag">hologram · ai assistant · comparatie · crispr</div>
       </div>
     </div>
+
+    <!-- GLOBAL SEARCH -->
+    <div class="search-wrap">
+      <div class="search-ic">🔍</div>
+      <input type="text" id="globalSearch" class="holo-input" autocomplete="off"
+             placeholder="Cauta o gena (BRCA1, p53, HBB, insulin mouse)..." spellcheck="false">
+      <div class="search-organ">
+        <select id="searchOrg" class="holo-input">
+          <option value="human">Human</option>
+          <option value="mouse">Mouse</option>
+          <option value="rat">Rat</option>
+          <option value="zebrafish">Zebrafish</option>
+          <option value="fly">Fly</option>
+          <option value="yeast">Yeast</option>
+          <option value="e.coli">E. coli</option>
+          <option value="arabidopsis">Arabidopsis</option>
+        </select>
+      </div>
+      <div class="search-slot">
+        <label>destinatie</label>
+        <div class="seg">
+          <button class="seg-btn active" data-slot="A">Slot A</button>
+          <button class="seg-btn" data-slot="B">Slot B</button>
+        </div>
+      </div>
+      <button class="btn holo-btn" id="btnSearchGo">⚡ Incarca</button>
+      <div class="search-suggest" id="searchSuggest"></div>
+    </div>
+
     <div class="header-actions">
-      <button class="btn btn-help" id="btnHelp" title="Explicatii pentru fiecare unealta">❓ Ghid</button>
-      <button class="btn btn-demo" id="btnDemoAuto" title="Demonstratie automata pe HBB">▶ Demo automat</button>
+      <button class="btn btn-help" id="btnHelp">❓ Ghid</button>
+      <button class="btn btn-demo" id="btnDemoAuto">▶ Demo</button>
       <div class="tag" id="health">conectare...</div>
     </div>
   </header>
@@ -27,41 +60,40 @@
   <!-- WELCOME / QUICK START -->
   <div class="welcome" id="welcome">
     <div class="welcome-inner">
-      <div class="welcome-title">Bine ai venit la <b>Laborator Genetica</b></div>
+      <div class="welcome-title">⚡ <b>Laborator Genetica</b> · edita, compara, intreaba AI</div>
       <div class="welcome-steps">
-        <div class="w-step"><span class="w-num">1</span> Alege o <b>secventa</b> (preset, UCSC, NCBI sau lipeste-o)</div>
-        <div class="w-step"><span class="w-num">2</span> Apasa o <b>unealta</b> (Transcrie, Tradu, CRISPR, PCR...)</div>
-        <div class="w-step"><span class="w-num">3</span> Urmareste rezultatul in <b>ADN / ARN / Proteina / Gel</b></div>
+        <div class="w-step"><span class="w-num">1</span> Cauta sus o gena <b>(HBB, BRCA1, p53, INS...)</b></div>
+        <div class="w-step"><span class="w-num">2</span> Alege <b>Slot A</b> sau <b>Slot B</b> si apasa Incarca</div>
+        <div class="w-step"><span class="w-num">3</span> Compara / edita / intreaba <b>asistentul AI</b> din dreapta</div>
       </div>
-      <button class="btn-ghost" id="btnDismissWelcome" style="margin-top:8px">am inteles, ascunde</button>
+      <button class="btn-ghost" id="btnDismissWelcome" style="margin-top:8px">am inteles · ascunde</button>
     </div>
   </div>
 
-  <div class="grid">
+  <div class="grid3">
 
-    <!-- LEFT: tools & presets -->
+    <!-- LEFT: tools -->
     <aside>
-      <div class="card">
-        <h2>⎈ 1. Alege o secventa <span class="bar"></span></h2>
+      <div class="card holo">
+        <h2>⎈ surse alternative <span class="bar"></span></h2>
         <div class="source-tabs">
           <button class="src-tab active" data-src="preset">Preset</button>
-          <button class="src-tab" data-src="ucsc">UCSC (genomic)</button>
-          <button class="src-tab" data-src="ncbi">NCBI (mRNA/CDS)</button>
+          <button class="src-tab" data-src="ucsc">UCSC</button>
           <button class="src-tab" data-src="manual">Manual</button>
         </div>
 
         <div class="src-panel" id="srcPresetPanel">
           <label>preset demo</label>
-          <select id="presetSel"></select>
-          <button class="btn" id="btnLoadPreset" style="margin-top:8px;width:100%">▶ Incarca preset</button>
+          <select id="presetSel" class="holo-input"></select>
+          <button class="btn holo-btn" id="btnLoadPreset" style="margin-top:8px;width:100%">▶ Incarca preset → Slot activ</button>
           <div class="hint" id="presetDesc" style="margin-top:8px"></div>
         </div>
 
         <div class="src-panel" id="srcUcscPanel" style="display:none">
-          <label>simbol gena (ex: HBB, BRCA1, TP53)</label>
-          <input type="text" id="ucscGene" value="HBB" spellcheck="false">
+          <label>simbol gena</label>
+          <input type="text" id="ucscGene" value="HBB" spellcheck="false" class="holo-input">
           <label style="margin-top:10px">organism</label>
-          <select id="ucscGenome">
+          <select id="ucscGenome" class="holo-input">
             <option value="hg38">Human (hg38)</option>
             <option value="mm39">Mouse (mm39)</option>
             <option value="rn7">Rat (rn7)</option>
@@ -71,72 +103,44 @@
             <option value="sacCer3">Yeast (sacCer3)</option>
           </select>
           <label style="margin-top:10px">max lungime (bp)</label>
-          <input type="number" id="ucscMaxLen" value="500" min="30" max="10000">
-          <button class="btn" id="btnFetchUCSC" style="margin-top:10px;width:100%">⬇ Descarca din UCSC</button>
-          <div class="hint" id="ucscStatus" style="margin-top:8px;word-break:break-word">
-            <b>Genomic</b> — secventa de pe cromozom, cu introni.
-          </div>
-        </div>
-
-        <div class="src-panel" id="srcNcbiPanel" style="display:none">
-          <label>simbol gena</label>
-          <input type="text" id="ncbiGene" value="HBB" spellcheck="false">
-          <label style="margin-top:10px">organism</label>
-          <select id="ncbiOrg">
-            <option value="human">Human (Homo sapiens)</option>
-            <option value="mouse">Mouse (Mus musculus)</option>
-            <option value="rat">Rat (Rattus norvegicus)</option>
-            <option value="zebrafish">Zebrafish (Danio rerio)</option>
-            <option value="fly">Drosophila melanogaster</option>
-            <option value="c.elegans">C. elegans</option>
-            <option value="yeast">Yeast (S. cerevisiae)</option>
-            <option value="e.coli">E. coli</option>
-            <option value="arabidopsis">Arabidopsis thaliana</option>
-          </select>
-          <label style="margin-top:10px">tip secventa</label>
-          <select id="ncbiType">
-            <option value="cds">CDS (doar coding, fara UTR)</option>
-            <option value="mrna">mRNA complet (cu UTR)</option>
-          </select>
-          <button class="btn" id="btnFetchNCBI" style="margin-top:10px;width:100%">⬇ Descarca din NCBI</button>
-          <div class="hint" id="ncbiStatus" style="margin-top:8px;word-break:break-word">
-            <b>mRNA / CDS</b> — curate, fara introni, direct traducibile.
-          </div>
+          <input type="number" id="ucscMaxLen" value="500" min="30" max="10000" class="holo-input">
+          <button class="btn holo-btn" id="btnFetchUCSC" style="margin-top:10px;width:100%">⬇ Genomic (UCSC)</button>
+          <div class="hint" id="ucscStatus" style="margin-top:8px;word-break:break-word"><b>Genomic</b> — secventa cromozomiala, cu introni.</div>
         </div>
 
         <div class="src-panel" id="srcManualPanel" style="display:none">
           <label>secventa ADN (A/T/G/C)</label>
-          <textarea id="seqInput" rows="4" spellcheck="false" placeholder="Lipeste aici o secventa, ex: ATGGTGCACCTGACTCCTGAG..."></textarea>
+          <textarea id="seqInput" rows="4" spellcheck="false" placeholder="Lipeste o secventa, ex: ATGGTGCACCTGACTCCTGAG..." class="holo-input"></textarea>
           <div class="row" style="margin-top:8px">
-            <button class="btn" id="btnSet">▶ seteaza</button>
+            <button class="btn holo-btn" id="btnSet">▶ seteaza</button>
             <button class="btn-ghost" id="btnClear">goleste</button>
-            <button class="btn-ghost" id="btnRandom">↝ random 60bp</button>
+            <button class="btn-ghost" id="btnRandom">↝ random</button>
           </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>⚙ 2. Instrumente <span class="bar"></span></h2>
+      <div class="card holo">
+        <h2>⚙ instrumente <span class="bar"></span></h2>
         <div class="tool-list">
           <button class="tool-btn" data-tool="transcribe">
             <div class="tool-ic">📜</div>
-            <div class="tool-body"><div class="tool-t">Transcrie → ARN</div><div class="tool-d">ADN → ARN mesager (T devine U)</div></div>
+            <div class="tool-body"><div class="tool-t">Transcrie → ARN</div><div class="tool-d">ADN → ARN (T devine U)</div></div>
           </button>
           <button class="tool-btn" data-tool="translate">
             <div class="tool-ic">🧬</div>
-            <div class="tool-body"><div class="tool-t">Tradu → Proteina</div><div class="tool-d">Codoni ATG...stop → lant de aminoacizi</div></div>
+            <div class="tool-body"><div class="tool-t">Tradu → Proteina</div><div class="tool-d">Codoni ATG...stop → aminoacizi</div></div>
           </button>
           <button class="tool-btn" data-tool="mutate">
             <div class="tool-ic">✦</div>
-            <div class="tool-body"><div class="tool-t">Mutatie punctuala</div><div class="tool-d">Schimba o baza la o pozitie aleasa</div></div>
+            <div class="tool-body"><div class="tool-t">Mutatie punctuala</div><div class="tool-d">Schimba o baza la o pozitie</div></div>
           </button>
           <button class="tool-btn" data-tool="crispr">
             <div class="tool-ic">✂</div>
-            <div class="tool-body"><div class="tool-t">CRISPR / Cas9</div><div class="tool-d">Editare tintita cu ghid ARN + PAM</div></div>
+            <div class="tool-body"><div class="tool-t">CRISPR / Cas9</div><div class="tool-d">Editare tintita + PAM</div></div>
           </button>
           <button class="tool-btn" data-tool="restriction">
             <div class="tool-ic">⎯⎯|</div>
-            <div class="tool-body"><div class="tool-t">Enzima restrictie</div><div class="tool-d">Taie la site-ul ei (EcoRI, BamHI...)</div></div>
+            <div class="tool-body"><div class="tool-t">Enzima restrictie</div><div class="tool-d">Taie la site-ul ei (EcoRI...)</div></div>
           </button>
           <button class="tool-btn" data-tool="pcr">
             <div class="tool-ic">⚡</div>
@@ -144,11 +148,15 @@
           </button>
           <button class="tool-btn" data-tool="gel">
             <div class="tool-ic">▤</div>
-            <div class="tool-body"><div class="tool-t">Gel electroforeza</div><div class="tool-d">Afiseaza fragmente dupa marime</div></div>
+            <div class="tool-body"><div class="tool-t">Gel electroforeza</div><div class="tool-d">Fragmente pe gel dupa marime</div></div>
           </button>
           <button class="tool-btn" data-tool="complement">
             <div class="tool-ic">⟳</div>
-            <div class="tool-body"><div class="tool-t">Complement invers</div><div class="tool-d">Firul antisens citit 5'→3'</div></div>
+            <div class="tool-body"><div class="tool-t">Complement invers</div><div class="tool-d">Firul antisens 5'→3'</div></div>
+          </button>
+          <button class="tool-btn tool-compare" id="btnCompare">
+            <div class="tool-ic">⇄</div>
+            <div class="tool-body"><div class="tool-t">Compara A ↔ B</div><div class="tool-d">Aliniere si procent identitate</div></div>
           </button>
           <button class="tool-btn tool-reset" id="btnReset">
             <div class="tool-ic">⟲</div>
@@ -157,7 +165,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card holo">
         <h2>☷ Legenda aminoacizi <span class="bar"></span></h2>
         <div class="mini-legend">
           <span class="lg" style="color:var(--aa-nonpolar)">nonpolar</span>
@@ -170,54 +178,109 @@
       </div>
     </aside>
 
-    <!-- RIGHT: workspace -->
+    <!-- CENTER: workspace -->
     <section>
 
-      <div class="card">
-        <h2>🧬 ADN activ <span class="bar"></span></h2>
+      <!-- SLOT TABS A / B -->
+      <div class="card holo">
+        <div class="slot-bar">
+          <div class="slot-chip slot-chip-A active" data-slot="A">
+            <span class="slot-dot"></span>
+            <div class="slot-meta">
+              <div class="slot-l">SLOT A (activ)</div>
+              <div class="slot-n" id="slotAName">—</div>
+            </div>
+            <div class="slot-len" id="slotALen">0 bp</div>
+          </div>
+          <div class="slot-chip slot-chip-B" data-slot="B">
+            <span class="slot-dot"></span>
+            <div class="slot-meta">
+              <div class="slot-l">SLOT B</div>
+              <div class="slot-n" id="slotBName">—</div>
+            </div>
+            <div class="slot-len" id="slotBLen">0 bp</div>
+          </div>
+          <button class="btn-ghost" id="btnSwapAB" title="schimb A cu B">⇄ swap</button>
+        </div>
+      </div>
+
+      <div class="card holo">
+        <h2>🧬 ADN activ <span class="accent-slot" id="activeSlotTag">SLOT A</span> <span class="bar"></span></h2>
         <div class="stats">
           <div class="stat"><div class="lab">lungime</div><div class="val" id="statLen">0 bp</div></div>
           <div class="stat cyan"><div class="lab">GC content</div><div class="val" id="statGC">—</div></div>
           <div class="stat mag"><div class="lab">ORF start</div><div class="val" id="statORF">—</div></div>
           <div class="stat ye"><div class="lab">proteina</div><div class="val" id="statAA">— AA</div></div>
         </div>
-        <div class="dna-viewer" id="dnaView">
+        <div class="dna-viewer has-scan" id="dnaView">
+          <div class="scan-line"></div>
           <div class="empty-state">
             <div class="empty-ic">🧬</div>
-            <div>Nu ai o secventa incarcata inca.</div>
-            <div class="hint" style="margin-top:6px">Alege un preset din stanga sau descarca una de pe UCSC / NCBI.</div>
+            <div>Nu ai o secventa in slotul activ.</div>
+            <div class="hint" style="margin-top:6px">Cauta o gena sus sau alege un preset din stanga.</div>
           </div>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card holo">
         <h2>📜 ARN mesager <span class="bar"></span></h2>
-        <div class="rna-view" id="rnaView"><span class="hint">apasa <b>Transcrie → ARN</b> pentru a transforma ADN-ul in ARN (T → U)</span></div>
+        <div class="rna-view" id="rnaView"><span class="hint">apasa <b>Transcrie → ARN</b> (T → U)</span></div>
       </div>
 
-      <div class="card">
+      <div class="card holo">
         <h2>🧪 Proteina <span class="bar"></span></h2>
-        <div class="prot-view" id="protView"><span class="hint">apasa <b>Tradu → Proteina</b> pentru a citi codonii si a produce lantul de aminoacizi</span></div>
+        <div class="prot-view" id="protView"><span class="hint">apasa <b>Tradu → Proteina</b> (codoni → aminoacizi)</span></div>
         <div id="mutSummary"></div>
       </div>
 
-      <div class="card" id="gelCard" style="display:none">
-        <h2>▤ Gel electroforeza <span class="bar"></span></h2>
-        <div class="gel-wrap">
-          <div class="gel-lane" id="gelLane">
-            <div class="gel-top"></div>
-          </div>
-          <div class="gel-ladder" id="gelLadder"></div>
-        </div>
-        <div class="hint" style="margin-top:8px">Fragmentele mici migreaza mai departe (jos). Ruleaza dupa o <b>enzima de restrictie</b> sau <b>PCR</b>.</div>
+      <div class="card holo" id="compareCard" style="display:none">
+        <h2>⇄ Comparatie A ↔ B <span class="accent-slot" id="compareIdentity">—</span> <span class="bar"></span></h2>
+        <div id="compareStats" class="compare-stats"></div>
+        <div class="compare-view" id="compareView"></div>
+        <div class="hint" style="margin-top:8px">Verde = match · rosu = mismatch · gri = gap. Pozitiile rosii sunt candidatii pentru editare.</div>
       </div>
 
-      <div class="card">
+      <div class="card holo" id="gelCard" style="display:none">
+        <h2>▤ Gel electroforeza <span class="bar"></span></h2>
+        <div class="gel-wrap">
+          <div class="gel-lane" id="gelLane"><div class="gel-top"></div></div>
+          <div class="gel-ladder" id="gelLadder"></div>
+        </div>
+        <div class="hint" style="margin-top:8px">Fragmentele mici migreaza mai departe (jos).</div>
+      </div>
+
+      <div class="card holo">
         <h2>◉ Jurnal <span class="bar"></span></h2>
         <div class="log" id="log"></div>
       </div>
 
     </section>
+
+    <!-- RIGHT: AI assistant -->
+    <aside class="ai-panel">
+      <div class="card holo ai-card">
+        <h2>🤖 Asistent AI Claude <span class="pulse-dot"></span> <span class="bar"></span></h2>
+        <div class="ai-presets">
+          <button class="ai-preset" data-q="Explica-mi pe scurt ce face aceasta gena.">ce face?</button>
+          <button class="ai-preset" data-q="Exista inrudire evolutiva intre secventa A si B? Cat de asemanatoare sunt?">inrudire A↔B</button>
+          <button class="ai-preset" data-q="Unde pot edita in siguranta aceasta secventa cu CRISPR? Sugereaza 2-3 tinte cu ghid de 20bp si PAM NGG.">unde editez cu CRISPR</button>
+          <button class="ai-preset" data-q="Ce boli sau functii sunt asociate cu mutatiile din aceasta gena?">boli asociate</button>
+          <button class="ai-preset" data-q="Compara la nivel de proteina: aminoacizi conservati vs schimbati, si ce inseamna biologic.">compara proteine</button>
+          <button class="ai-preset" data-q="Exista domenii functionale cunoscute in aceasta proteina? Da-mi pozitiile aproximative.">domenii functionale</button>
+        </div>
+        <div class="ai-chat" id="aiChat">
+          <div class="ai-msg ai-bot">
+            <div class="ai-avatar">🤖</div>
+            <div class="ai-bubble">Salut! Sunt asistentul tau biolog molecular. Incarca o secventa in Slot A (si optional in Slot B pentru comparatie), apoi intreaba-ma orice: inrudire, tinte CRISPR, boli asociate, comparatii de proteine.</div>
+          </div>
+        </div>
+        <div class="ai-input-wrap">
+          <textarea id="aiInput" class="holo-input ai-input" rows="2" placeholder="Intreaba-ma orice despre secventele tale..."></textarea>
+          <button class="btn holo-btn ai-send" id="btnAiSend">⚡ Trimite</button>
+        </div>
+      </div>
+    </aside>
+
   </div>
 
   <div class="footer">

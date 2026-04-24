@@ -1,12 +1,19 @@
-# Laborator Virtual de Genetică
+# Laborator Virtual de Genetică — AI Lab
+
+Interfață holografică cu asistent AI Claude integrat. Caută gene reale, compară două secvențe, editează cu CRISPR, întreabă AI-ul orice.
+
 
 Simulator educativ pentru genetică moleculară: ADN/ARN/proteină, CRISPR, digestie cu enzime de restricție, PCR, electroforeză pe gel. Frontend interactiv, backend Flask minimal.
 
 **Port**: `8780`
 
 ## Ce face
-- `server.py` — Flask minimal care servește static `public/` și răspunde cu simulări simple (calcule simple de genetică: transcripție, traducere etc.)
-- `public/` — pagini HTML + JS pentru fiecare instrument (CRISPR, restricție, PCR, gel).
+- `server.py` — Flask: servește static `public/` + endpoint `/api/ai/ask` pentru asistent AI
+- `asistent.py` — modul Python care spawnează `claude -p` în subprocess cu stream-json și transformă evenimentele în SSE
+- `public/js/data.js` — constante: cod genetic, enzime de restricție, presetări
+- `public/js/bio.js` — logică moleculară (transcriere, traducere, CRISPR, PCR, digestie)
+- `public/js/app.js` — UI complet (slots A/B, comparație, căutare NCBI, chat AI, animații)
+- `public/css/style.css` — design holografic cu glow, scan-line, particule de fundal, canvas animat
 
 ## Install rapid
 
@@ -29,12 +36,18 @@ sudo systemctl enable --now laborator-genetica.service
 ```
 
 ## Module incluse
+- **Bară de căutare globală** — tastezi gena, organism, Slot A/B → Enter → NCBI aduce CDS-ul
+- **Slots A & B** — două "memorii" de secvențe, schimbi activul printr-un click
+- **Comparație A↔B** — aliniere + % identitate + highlight diferențe
+- **Asistent AI Claude** (panou dreapta, streaming) — întrebări despre înrudire, CRISPR, boli, domenii
 - **ADN ↔ ARN ↔ Proteină** (transcripție, traducere, codul genetic)
 - **CRISPR** (editare țintită, căutare PAM)
 - **Enzime de restricție** (hartă de tăiere, digestie)
 - **PCR** (amplificare, calcul Tm primeri)
 - **Gel de electroforeză** (vizualizare mobilitate relativă)
-- **UCSC Genome Browser** (încarcă gene reale direct din baza de date publică)
+- **UCSC Genome Browser** (secvențe genomice, cu introni)
+- **NCBI RefSeq** (CDS sau mRNA, fără introni, direct traducibile)
+- **Demo automat** — 6 pași animați (HBB normală vs falciformă + întrebare AI)
 
 ## Integrări cu baze de date publice
 
@@ -66,3 +79,42 @@ API: `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/` (CORS activat → client-s
 - **NCBI (CDS)** → încarcă CDS-ul aceleiași gene, apasă "Tradu" → obții proteina fără probleme de cadru de citire
 
 Ambele rulează exclusiv în browser (zero trafic prin serverul Flask).
+
+## Asistent AI (Claude)
+
+Panoul din dreapta. Spawn local de `claude -p --model sonnet --output-format stream-json` prin `asistent.py`, evenimentele `text_delta` sunt transformate în SSE și livrate browserului.
+
+Contextul trimis la fiecare întrebare:
+- Slot A (nume + ADN, capat la 3000 bp)
+- Slot B (dacă e încărcat)
+- Întrebarea utilizatorului
+
+Prompt presetate (butoane rotunjite deasupra chat-ului):
+- "ce face?" — explică funcția genei
+- "înrudire A↔B" — % identitate, omologie, interpretare evolutivă
+- "unde editez cu CRISPR" — sugerează 2-3 ținte cu ghid 20bp + PAM NGG
+- "boli asociate" — patologii și mutații cunoscute
+- "compară proteine" — conservați vs schimbați
+- "domenii funcționale" — poziții aproximative domenii
+
+Claude are `WebSearch` activat, deci poate aduce info actualizate (domenii, boli, publicații).
+
+Environment variables:
+- `GENETICA_AI_MODEL` — default `sonnet`, poate fi `opus` pentru analiză mai profundă
+
+## Arhitectură
+
+```
+ browser (index.html + app.js)
+       │
+       ├── fetch direct ──> api.genome.ucsc.edu    (secvențe genomice, CORS)
+       ├── fetch direct ──> eutils.ncbi.nlm.nih.gov (CDS/mRNA + autocomplete, CORS)
+       │
+       └── POST /api/ai/ask ──> Flask (server.py)
+                                   │
+                                   ▼
+                             asistent.py (subprocess claude -p)
+                                   │
+                                   ▼
+                              stream-json → SSE text events
+```
