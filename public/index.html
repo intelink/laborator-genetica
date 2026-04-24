@@ -17,93 +17,148 @@
         <div class="tag">transcriere · traducere · crispr · restrictie · pcr · gel</div>
       </div>
     </div>
-    <div class="tag" id="health">conectare...</div>
+    <div class="header-actions">
+      <button class="btn btn-help" id="btnHelp" title="Explicatii pentru fiecare unealta">❓ Ghid</button>
+      <button class="btn btn-demo" id="btnDemoAuto" title="Demonstratie automata pe HBB">▶ Demo automat</button>
+      <div class="tag" id="health">conectare...</div>
+    </div>
   </header>
+
+  <!-- WELCOME / QUICK START -->
+  <div class="welcome" id="welcome">
+    <div class="welcome-inner">
+      <div class="welcome-title">Bine ai venit la <b>Laborator Genetica</b></div>
+      <div class="welcome-steps">
+        <div class="w-step"><span class="w-num">1</span> Alege o <b>secventa</b> (preset, UCSC, NCBI sau lipeste-o)</div>
+        <div class="w-step"><span class="w-num">2</span> Apasa o <b>unealta</b> (Transcrie, Tradu, CRISPR, PCR...)</div>
+        <div class="w-step"><span class="w-num">3</span> Urmareste rezultatul in <b>ADN / ARN / Proteina / Gel</b></div>
+      </div>
+      <button class="btn-ghost" id="btnDismissWelcome" style="margin-top:8px">am inteles, ascunde</button>
+    </div>
+  </div>
 
   <div class="grid">
 
     <!-- LEFT: tools & presets -->
     <aside>
       <div class="card">
-        <h2>⎈ preset-uri <span class="bar"></span></h2>
-        <select id="presetSel"></select>
-        <button class="btn" id="btnLoadPreset" style="margin-top:8px;width:100%">Incarca</button>
-        <div class="hint" id="presetDesc" style="margin-top:8px"></div>
-      </div>
+        <h2>⎈ 1. Alege o secventa <span class="bar"></span></h2>
+        <div class="source-tabs">
+          <button class="src-tab active" data-src="preset">Preset</button>
+          <button class="src-tab" data-src="ucsc">UCSC (genomic)</button>
+          <button class="src-tab" data-src="ncbi">NCBI (mRNA/CDS)</button>
+          <button class="src-tab" data-src="manual">Manual</button>
+        </div>
 
-      <div class="card">
-        <h2>🌐 UCSC Genome <span class="bar"></span></h2>
-        <label>simbol gena (ex: HBB, BRCA1, TP53, INS)</label>
-        <input type="text" id="ucscGene" value="HBB" spellcheck="false" style="width:100%;background:#0a1318;color:var(--txt);border:1px solid var(--panel-brd);border-radius:6px;padding:6px 8px;font-family:var(--mono);margin-top:4px">
-        <label style="margin-top:10px">organism</label>
-        <select id="ucscGenome">
-          <option value="hg38">Human (hg38)</option>
-          <option value="mm39">Mouse (mm39)</option>
-          <option value="rn7">Rat (rn7)</option>
-          <option value="danRer11">Zebrafish (danRer11)</option>
-          <option value="dm6">Drosophila (dm6)</option>
-          <option value="ce11">C. elegans (ce11)</option>
-          <option value="sacCer3">Yeast (sacCer3)</option>
-        </select>
-        <label style="margin-top:10px">max lungime secventa (bp)</label>
-        <input type="number" id="ucscMaxLen" value="500" min="30" max="10000" style="width:100%;background:#0a1318;color:var(--txt);border:1px solid var(--panel-brd);border-radius:6px;padding:6px 8px;font-family:var(--mono)">
-        <button class="btn" id="btnFetchUCSC" style="margin-top:10px;width:100%">⬇ Descarca din UCSC</button>
-        <div class="hint" id="ucscStatus" style="margin-top:8px;word-break:break-word">Secvente genomice (cu introni) de la genome.ucsc.edu</div>
-      </div>
+        <div class="src-panel" id="srcPresetPanel">
+          <label>preset demo</label>
+          <select id="presetSel"></select>
+          <button class="btn" id="btnLoadPreset" style="margin-top:8px;width:100%">▶ Incarca preset</button>
+          <div class="hint" id="presetDesc" style="margin-top:8px"></div>
+        </div>
 
-      <div class="card">
-        <h2>🧪 NCBI RefSeq <span class="bar"></span></h2>
-        <label>simbol gena</label>
-        <input type="text" id="ncbiGene" value="HBB" spellcheck="false" style="width:100%;background:#0a1318;color:var(--txt);border:1px solid var(--panel-brd);border-radius:6px;padding:6px 8px;font-family:var(--mono);margin-top:4px">
-        <label style="margin-top:10px">organism</label>
-        <select id="ncbiOrg">
-          <option value="human">Human (Homo sapiens)</option>
-          <option value="mouse">Mouse (Mus musculus)</option>
-          <option value="rat">Rat (Rattus norvegicus)</option>
-          <option value="zebrafish">Zebrafish (Danio rerio)</option>
-          <option value="fly">Drosophila melanogaster</option>
-          <option value="c.elegans">C. elegans</option>
-          <option value="yeast">Yeast (S. cerevisiae)</option>
-          <option value="e.coli">E. coli</option>
-          <option value="arabidopsis">Arabidopsis thaliana</option>
-        </select>
-        <label style="margin-top:10px">tip secventa</label>
-        <select id="ncbiType">
-          <option value="cds">CDS (doar coding, fara UTR)</option>
-          <option value="mrna">mRNA complet (cu UTR)</option>
-        </select>
-        <button class="btn" id="btnFetchNCBI" style="margin-top:10px;width:100%">⬇ Descarca din NCBI</button>
-        <div class="hint" id="ncbiStatus" style="margin-top:8px;word-break:break-word">mRNA/CDS curate (fara introni) de la eutils.ncbi.nlm.nih.gov</div>
-      </div>
+        <div class="src-panel" id="srcUcscPanel" style="display:none">
+          <label>simbol gena (ex: HBB, BRCA1, TP53)</label>
+          <input type="text" id="ucscGene" value="HBB" spellcheck="false">
+          <label style="margin-top:10px">organism</label>
+          <select id="ucscGenome">
+            <option value="hg38">Human (hg38)</option>
+            <option value="mm39">Mouse (mm39)</option>
+            <option value="rn7">Rat (rn7)</option>
+            <option value="danRer11">Zebrafish (danRer11)</option>
+            <option value="dm6">Drosophila (dm6)</option>
+            <option value="ce11">C. elegans (ce11)</option>
+            <option value="sacCer3">Yeast (sacCer3)</option>
+          </select>
+          <label style="margin-top:10px">max lungime (bp)</label>
+          <input type="number" id="ucscMaxLen" value="500" min="30" max="10000">
+          <button class="btn" id="btnFetchUCSC" style="margin-top:10px;width:100%">⬇ Descarca din UCSC</button>
+          <div class="hint" id="ucscStatus" style="margin-top:8px;word-break:break-word">
+            <b>Genomic</b> — secventa de pe cromozom, cu introni.
+          </div>
+        </div>
 
-      <div class="card">
-        <h2>✎ editare <span class="bar"></span></h2>
-        <label>secventa ADN (A/T/G/C)</label>
-        <textarea id="seqInput" rows="4" spellcheck="false"></textarea>
-        <div class="row" style="margin-top:8px">
-          <button class="btn" id="btnSet">▶ seteaza</button>
-          <button class="btn-ghost" id="btnClear">goleste</button>
-          <button class="btn-ghost" id="btnRandom">↝ random 60bp</button>
+        <div class="src-panel" id="srcNcbiPanel" style="display:none">
+          <label>simbol gena</label>
+          <input type="text" id="ncbiGene" value="HBB" spellcheck="false">
+          <label style="margin-top:10px">organism</label>
+          <select id="ncbiOrg">
+            <option value="human">Human (Homo sapiens)</option>
+            <option value="mouse">Mouse (Mus musculus)</option>
+            <option value="rat">Rat (Rattus norvegicus)</option>
+            <option value="zebrafish">Zebrafish (Danio rerio)</option>
+            <option value="fly">Drosophila melanogaster</option>
+            <option value="c.elegans">C. elegans</option>
+            <option value="yeast">Yeast (S. cerevisiae)</option>
+            <option value="e.coli">E. coli</option>
+            <option value="arabidopsis">Arabidopsis thaliana</option>
+          </select>
+          <label style="margin-top:10px">tip secventa</label>
+          <select id="ncbiType">
+            <option value="cds">CDS (doar coding, fara UTR)</option>
+            <option value="mrna">mRNA complet (cu UTR)</option>
+          </select>
+          <button class="btn" id="btnFetchNCBI" style="margin-top:10px;width:100%">⬇ Descarca din NCBI</button>
+          <div class="hint" id="ncbiStatus" style="margin-top:8px;word-break:break-word">
+            <b>mRNA / CDS</b> — curate, fara introni, direct traducibile.
+          </div>
+        </div>
+
+        <div class="src-panel" id="srcManualPanel" style="display:none">
+          <label>secventa ADN (A/T/G/C)</label>
+          <textarea id="seqInput" rows="4" spellcheck="false" placeholder="Lipeste aici o secventa, ex: ATGGTGCACCTGACTCCTGAG..."></textarea>
+          <div class="row" style="margin-top:8px">
+            <button class="btn" id="btnSet">▶ seteaza</button>
+            <button class="btn-ghost" id="btnClear">goleste</button>
+            <button class="btn-ghost" id="btnRandom">↝ random 60bp</button>
+          </div>
         </div>
       </div>
 
       <div class="card">
-        <h2>⚙ instrumente <span class="bar"></span></h2>
-        <div class="tool-grid">
-          <button class="btn-ghost" data-tool="transcribe">📜 Transcrie → ARN</button>
-          <button class="btn-ghost" data-tool="translate">🧬 Tradu → Proteina</button>
-          <button class="btn-ghost" data-tool="mutate">✦ Mutatie punctuala</button>
-          <button class="btn-ghost" data-tool="crispr">✂ CRISPR / Cas9</button>
-          <button class="btn-ghost" data-tool="restriction">⎯⎯| Enzima restrictie</button>
-          <button class="btn-ghost" data-tool="pcr">⚡ PCR (amplifica)</button>
-          <button class="btn-ghost" data-tool="gel">▤ Gel electroforeza</button>
-          <button class="btn-ghost" data-tool="complement">⟳ Complement invers</button>
-          <button class="btn-danger" id="btnReset">⟲ Reset laborator</button>
+        <h2>⚙ 2. Instrumente <span class="bar"></span></h2>
+        <div class="tool-list">
+          <button class="tool-btn" data-tool="transcribe">
+            <div class="tool-ic">📜</div>
+            <div class="tool-body"><div class="tool-t">Transcrie → ARN</div><div class="tool-d">ADN → ARN mesager (T devine U)</div></div>
+          </button>
+          <button class="tool-btn" data-tool="translate">
+            <div class="tool-ic">🧬</div>
+            <div class="tool-body"><div class="tool-t">Tradu → Proteina</div><div class="tool-d">Codoni ATG...stop → lant de aminoacizi</div></div>
+          </button>
+          <button class="tool-btn" data-tool="mutate">
+            <div class="tool-ic">✦</div>
+            <div class="tool-body"><div class="tool-t">Mutatie punctuala</div><div class="tool-d">Schimba o baza la o pozitie aleasa</div></div>
+          </button>
+          <button class="tool-btn" data-tool="crispr">
+            <div class="tool-ic">✂</div>
+            <div class="tool-body"><div class="tool-t">CRISPR / Cas9</div><div class="tool-d">Editare tintita cu ghid ARN + PAM</div></div>
+          </button>
+          <button class="tool-btn" data-tool="restriction">
+            <div class="tool-ic">⎯⎯|</div>
+            <div class="tool-body"><div class="tool-t">Enzima restrictie</div><div class="tool-d">Taie la site-ul ei (EcoRI, BamHI...)</div></div>
+          </button>
+          <button class="tool-btn" data-tool="pcr">
+            <div class="tool-ic">⚡</div>
+            <div class="tool-body"><div class="tool-t">PCR (amplificare)</div><div class="tool-d">Primer forward + reverse → amplicon</div></div>
+          </button>
+          <button class="tool-btn" data-tool="gel">
+            <div class="tool-ic">▤</div>
+            <div class="tool-body"><div class="tool-t">Gel electroforeza</div><div class="tool-d">Afiseaza fragmente dupa marime</div></div>
+          </button>
+          <button class="tool-btn" data-tool="complement">
+            <div class="tool-ic">⟳</div>
+            <div class="tool-body"><div class="tool-t">Complement invers</div><div class="tool-d">Firul antisens citit 5'→3'</div></div>
+          </button>
+          <button class="tool-btn tool-reset" id="btnReset">
+            <div class="tool-ic">⟲</div>
+            <div class="tool-body"><div class="tool-t">Reset laborator</div><div class="tool-d">Sterge totul si revine la zero</div></div>
+          </button>
         </div>
       </div>
 
       <div class="card">
-        <h2>☷ legenda AA <span class="bar"></span></h2>
+        <h2>☷ Legenda aminoacizi <span class="bar"></span></h2>
         <div class="mini-legend">
           <span class="lg" style="color:var(--aa-nonpolar)">nonpolar</span>
           <span class="lg" style="color:var(--aa-polar)">polar</span>
@@ -127,34 +182,38 @@
           <div class="stat ye"><div class="lab">proteina</div><div class="val" id="statAA">— AA</div></div>
         </div>
         <div class="dna-viewer" id="dnaView">
-          <div class="hint">Incarca o secventa preset sau lipeste una proprie.</div>
+          <div class="empty-state">
+            <div class="empty-ic">🧬</div>
+            <div>Nu ai o secventa incarcata inca.</div>
+            <div class="hint" style="margin-top:6px">Alege un preset din stanga sau descarca una de pe UCSC / NCBI.</div>
+          </div>
         </div>
       </div>
 
       <div class="card">
         <h2>📜 ARN mesager <span class="bar"></span></h2>
-        <div class="rna-view" id="rnaView"><span class="hint">apasa "Transcrie"</span></div>
+        <div class="rna-view" id="rnaView"><span class="hint">apasa <b>Transcrie → ARN</b> pentru a transforma ADN-ul in ARN (T → U)</span></div>
       </div>
 
       <div class="card">
-        <h2>🧪 proteina <span class="bar"></span></h2>
-        <div class="prot-view" id="protView"><span class="hint">apasa "Tradu" (sau incarca preset)</span></div>
+        <h2>🧪 Proteina <span class="bar"></span></h2>
+        <div class="prot-view" id="protView"><span class="hint">apasa <b>Tradu → Proteina</b> pentru a citi codonii si a produce lantul de aminoacizi</span></div>
         <div id="mutSummary"></div>
       </div>
 
       <div class="card" id="gelCard" style="display:none">
-        <h2>▤ gel electroforeza <span class="bar"></span></h2>
+        <h2>▤ Gel electroforeza <span class="bar"></span></h2>
         <div class="gel-wrap">
           <div class="gel-lane" id="gelLane">
             <div class="gel-top"></div>
           </div>
           <div class="gel-ladder" id="gelLadder"></div>
         </div>
-        <div class="hint" style="margin-top:8px">Fragmente mici migreaza mai departe (jos). Ruleaza dupa o taiere cu enzima sau PCR.</div>
+        <div class="hint" style="margin-top:8px">Fragmentele mici migreaza mai departe (jos). Ruleaza dupa o <b>enzima de restrictie</b> sau <b>PCR</b>.</div>
       </div>
 
       <div class="card">
-        <h2>◉ jurnal <span class="bar"></span></h2>
+        <h2>◉ Jurnal <span class="bar"></span></h2>
         <div class="log" id="log"></div>
       </div>
 

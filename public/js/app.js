@@ -84,7 +84,13 @@ function setSequence(seq, label, kind){
 document.querySelectorAll('[data-tool]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     const t = btn.dataset.tool;
-    if (!state.seq && t !== 'complement'){ logEvt('nu ai secventa activa', 'err'); return; }
+    if (!state.seq && t !== 'complement'){
+      logEvt('nu ai secventa activa — alege un preset sau descarca una', 'err');
+      // sclipeste cardul de sursa pentru a-l evidentia
+      const card = document.querySelector('aside .card');
+      if (card){ card.style.boxShadow='0 0 0 2px var(--rd)'; setTimeout(()=>card.style.boxShadow='',900); }
+      return;
+    }
     if (t === 'transcribe') { doTranscribe(); }
     else if (t === 'translate') { doTranslate(); }
     else if (t === 'mutate') { openMutateModal(); }
@@ -94,6 +100,27 @@ document.querySelectorAll('[data-tool]').forEach(btn=>{
     else if (t === 'gel') { openGelModal(); }
     else if (t === 'complement') { doComplement(); }
   });
+});
+
+// ---------- source tabs (preset/ucsc/ncbi/manual) ----------
+document.querySelectorAll('.src-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.src-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const src = tab.dataset.src;
+    const map = { preset:'srcPresetPanel', ucsc:'srcUcscPanel', ncbi:'srcNcbiPanel', manual:'srcManualPanel' };
+    Object.values(map).forEach(id => { const el = $(id); if (el) el.style.display='none'; });
+    const tgt = $(map[src]); if (tgt) tgt.style.display='block';
+  });
+});
+
+// ---------- Welcome banner dismiss ----------
+if (localStorage.getItem('geneticaWelcomeHidden') === '1'){
+  const w = $("welcome"); if (w) w.classList.add('hidden');
+}
+$("btnDismissWelcome")?.addEventListener("click", () => {
+  $("welcome").classList.add('hidden');
+  localStorage.setItem('geneticaWelcomeHidden', '1');
 });
 
 // ---------- ops ----------
@@ -429,7 +456,10 @@ function openModal(html){
   $("modalBody").innerHTML = html;
   $("modal").classList.add("open");
 }
-function closeModal(){ $("modal").classList.remove("open"); }
+function closeModal(){
+  $("modal").classList.remove("open");
+  $("modalBody").classList.remove('modal-lg');
+}
 $("modal").addEventListener("click", e=>{ if (e.target.id === 'modal') closeModal(); });
 window.closeModal = closeModal;
 window.applyMutate = applyMutate;
@@ -600,9 +630,130 @@ async function fetchFromNCBI(){
 $("btnFetchNCBI").addEventListener("click", fetchFromNCBI);
 $("ncbiGene").addEventListener("keydown", e => { if (e.key === 'Enter') fetchFromNCBI(); });
 
+// ---------- Help modal (Ghid pentru incepatori) ----------
+function openHelp(){
+  const html = `
+    <h3>❓ Ghid Laborator Genetica</h3>
+    <div class="help-body">
+      <h4>Ce e aici?</h4>
+      <p>Un laborator virtual in care "joci" cu ADN: poti incarca gene reale, sa le transformi in ARN,
+      sa le traduci in proteine, sa faci mutatii, CRISPR, digestii cu enzime, PCR si gel de electroforeza.</p>
+
+      <h4>Bazele (pentru complet nou-veniti)</h4>
+      <p><b>ADN</b> = siruri lungi de 4 litere: <code>A</code> (adenina), <code>T</code> (timina),
+      <code>G</code> (guanina), <code>C</code> (citozina). Ele formeaza cuvinte de cate 3 — <b>codoni</b>.</p>
+      <p><b>ARN</b> = copie a ADN-ului facuta in celula. Diferenta: peste tot unde era <code>T</code>,
+      apare <code>U</code> (uracil). Asta face butonul <b>Transcrie</b>.</p>
+      <p><b>Proteina</b> = sir de <b>aminoacizi</b> (AA). Fiecare codon de 3 litere ARN → 1 AA dupa
+      codul genetic universal. Start: <code>ATG</code> (Metionina). Stop: <code>TAA</code>, <code>TAG</code>,
+      sau <code>TGA</code>. Asta face butonul <b>Tradu</b>.</p>
+
+      <h4>Butoanele din "Instrumente"</h4>
+      <p><b>📜 Transcrie</b> — ADN → ARN. Inlocuieste T cu U.</p>
+      <p><b>🧬 Tradu</b> — Cauta primul <code>ATG</code> (start) si citeste din 3 in 3 litere pana la
+      stop. Fiecare triplet = un aminoacid.</p>
+      <p><b>✦ Mutatie punctuala</b> — Schimba o singura baza la o pozitie aleasa. Vei vedea daca
+      proteina se schimba (missense, nonsense, silent) sau nu.</p>
+      <p><b>✂ CRISPR / Cas9</b> — "Foarfeca moleculara" programabila. Ii dai un ghid ARN de 20 bp,
+      gaseste targetul in ADN urmat de <span class="pill">PAM NGG</span> si taie. In mod <b>knockout</b>
+      face o deletie mica (dezactiveaza gena). In mod <b>HDR</b> inserezi un template.</p>
+      <p><b>⎯⎯| Enzima restrictie</b> — Proteina care recunoaste o secventa scurta si taie exact acolo.
+      Exemple: <span class="pill">EcoRI: GAATTC</span> <span class="pill">BamHI: GGATCC</span>
+      <span class="pill">HindIII: AAGCTT</span>. Dupa taiere ai fragmente, care apar pe gel.</p>
+      <p><b>⚡ PCR</b> — Amplifica o bucata de ADN intre 2 primeri (scurte sonde de 3-20 bp).
+      Primer forward se leaga pe firul sens, reverse pe firul antisens.</p>
+      <p><b>▤ Gel</b> — Fragmente de ADN migreaza in gel: <b>cele mici merg mai departe</b> (jos),
+      cele mari raman sus. Asa separi si vezi ce lungimi ai.</p>
+      <p><b>⟳ Complement invers</b> — ADN e dublu-catenar. "Complement invers" = firul antisens,
+      citit de la 5' la 3'. Util cand gena e pe firul "minus" al cromozomului.</p>
+
+      <h4>Sursele de secvente</h4>
+      <p><b>Preset</b> — 6 exemple mici: insulina, beta-globina (normala si falciforma), GFP,
+      tinta CRISPR. <b>Recomandat pentru primul contact.</b></p>
+      <p><b>UCSC</b> (<span class="pill">api.genome.ucsc.edu</span>) — secvente <b>genomice</b>:
+      includ introni si UTR, exact cum arata in cromozom.</p>
+      <p><b>NCBI</b> (<span class="pill">eutils.ncbi.nlm.nih.gov</span>) — secvente <b>CDS sau mRNA</b>:
+      deja procesate (fara introni), gata de tradus la proteina.</p>
+      <p><b>Manual</b> — lipesti propria secventa ADN (doar A/T/G/C).</p>
+
+      <h4>Exemplu pas-cu-pas pe HBB (beta-globina)</h4>
+      <p>1. Alege tab-ul <b>NCBI</b>, lasa HBB / Human / CDS. 2. Apasa Descarca. 3. Apasa Tradu.
+      Vei vedea 147 aminoacizi incepand cu M (Metionina). 4. Incearca Mutatie: pozitie 17, baza nou=T
+      (asta recreeaza mutatia falciforma: Glu → Val).</p>
+
+      <h4>Apas "Demo automat" pentru a vedea tot asta animat!</h4>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">am inteles</button>
+    </div>
+  `;
+  $("modalBody").innerHTML = html;
+  $("modalBody").classList.add('modal-lg');
+  $("modal").classList.add("open");
+}
+$("btnHelp").addEventListener("click", openHelp);
+
+// ---------- Demo automat (tutorial animat pe HBB preset) ----------
+async function runDemo(){
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  logEvt('═══ Pornire demo automat pe HBB (beta-globina) ═══', 'info');
+  $("btnDemoAuto").disabled = true;
+  try {
+    // 1. incarca HBB normal din preset
+    logEvt('PAS 1/5: Incarc secventa HBB normala (preset)', 'info');
+    await sleep(600);
+    const p = PRESET_GENES.hbb_normal;
+    setSequence(p.seq, 'preset: '+p.name, 'ok');
+    await sleep(1800);
+    // 2. Transcrie
+    logEvt('PAS 2/5: Transcriere ADN → ARN (T devine U)', 'info');
+    await sleep(700);
+    doTranscribe();
+    await sleep(1800);
+    // 3. Tradu
+    logEvt('PAS 3/5: Traducere ARN → Proteina (codoni → aminoacizi)', 'info');
+    await sleep(700);
+    doTranslate();
+    await sleep(2200);
+    // 4. Mutatie falciforma (poz 17: A → T, codonul 6 devine Val in loc de Glu)
+    logEvt('PAS 4/5: Aplic mutatia falciforma (poz 17: A → T)', 'info');
+    await sleep(900);
+    const r = BIO.pointMutation(state.seq, 17, 'T');
+    if (r.ok){
+      state.prevSeq = state.seq;
+      state.seq = r.seq;
+      state.highlights = [{ start: 17, len: 1, cls: 'mut' }];
+      renderAll();
+      renderMutSummary();
+      logEvt('mutatie: poz 17 A → T (GAG → GTG, acidul glutamic → valina)', 'mut');
+    }
+    await sleep(2400);
+    // 5. Digestie EcoRI pe o secventa cu site
+    logEvt('PAS 5/5: Digestie cu EcoRI pe o secventa test', 'info');
+    await sleep(800);
+    const pt = PRESET_GENES.test_lab;
+    setSequence(pt.seq, 'preset: '+pt.name, 'ok');
+    await sleep(700);
+    const cut = BIO.cutWithEnzyme(state.seq, 'EcoRI');
+    if (cut.sites.length){
+      state.highlights = cut.sites.map(s => ({ start: s.start, len: cut.enzyme.site.length, cls: 'target' }))
+        .concat(cut.sites.map(s => ({ start: s.cut, len: 1, cls: 'cut' })));
+      state.fragments = cut.fragments;
+      renderAll();
+      renderGel(cut.fragments);
+      logEvt(`EcoRI (GAATTC): ${cut.sites.length} site-uri, ${cut.fragments.length} fragmente — vezi gel-ul`, 'ok');
+    }
+    await sleep(500);
+    logEvt('═══ Demo terminat. Acum incearca si tu! ═══', 'info');
+  } finally {
+    $("btnDemoAuto").disabled = false;
+  }
+}
+$("btnDemoAuto").addEventListener("click", runDemo);
+
 // ---------- init ----------
 initPresets();
 renderAll();
-logEvt('laborator pornit. incarca un preset sau lipeste o secventa.', 'info');
+logEvt('laborator pornit. incarca un preset sau apasa "Demo automat" sa vezi un tur.', 'info');
 
 })();
