@@ -8,8 +8,8 @@ const { CODON_TABLE, AA_INFO, RESTRICTION_ENZYMES, PRESET_GENES } = window.Genet
 // Doua sloturi (A si B) pentru comparatie. "seq" e proxy catre slotul activ.
 const state = {
   slots: {
-    A: { name: '', seq: '', prevSeq: '', highlights: [], fragments: [] },
-    B: { name: '', seq: '', prevSeq: '', highlights: [], fragments: [] },
+    A: { name: '', seq: '', prevSeq: '', highlights: [], fragments: [], acc: '' },
+    B: { name: '', seq: '', prevSeq: '', highlights: [], fragments: [], acc: '' },
   },
   active: 'A',
   get seq(){ return state.slots[state.active].seq; },
@@ -48,6 +48,7 @@ function updatePresetDesc(){
 $("btnLoadPreset").addEventListener("click", ()=>{
   const k = $("presetSel").value;
   const p = PRESET_GENES[k];
+  state.active = getPanelTarget('srcPresetPanel');
   setSequence(p.seq, 'preset: '+p.name, 'ok');
 });
 
@@ -55,6 +56,7 @@ $("btnLoadPreset").addEventListener("click", ()=>{
 $("btnSet").addEventListener("click", ()=>{
   const s = BIO.cleanSeq($("seqInput").value);
   if (!s){ logEvt('secventa goala sau doar caractere non-ATGC', 'err'); return; }
+  state.active = getPanelTarget('srcManualPanel');
   setSequence(s, 'secventa manuala ('+s.length+' bp)', 'info');
 });
 $("btnClear").addEventListener("click", ()=>{ $("seqInput").value = ''; });
@@ -69,7 +71,7 @@ $("btnRandom").addEventListener("click", ()=>{
 $("btnReset").addEventListener("click", ()=>{
   if (!confirm('Reset complet laborator?')) return;
   for (const k of ['A','B']){
-    state.slots[k] = { name:'', seq:'', prevSeq:'', highlights:[], fragments:[] };
+    state.slots[k] = { name:'', seq:'', prevSeq:'', highlights:[], fragments:[], acc:'' };
   }
   $("seqInput").value = '';
   setActiveSlot('A');
@@ -77,19 +79,22 @@ $("btnReset").addEventListener("click", ()=>{
   renderAll();
   logEvt('laborator resetat', 'info');
   $("gelCard").style.display = 'none';
+  $("featCard").style.display = 'none';
   $("compareCard").style.display = 'none';
   $("mutSummary").innerHTML = '';
 });
 
-function setSequence(seq, label, kind){
+function setSequence(seq, label, kind, acc){
   const slot = state.slots[state.active];
   slot.prevSeq = slot.seq;
   slot.seq = BIO.cleanSeq(seq);
   slot.name = label;
   slot.highlights = [];
   slot.fragments = [];
+  slot.acc = acc || '';
   if ($("seqInput")) $("seqInput").value = slot.seq;
   $("gelCard").style.display = 'none';
+  $("featCard").style.display = 'none';
   $("mutSummary").innerHTML = '';
   updateSlotChips();
   renderAll();
@@ -104,7 +109,7 @@ function setActiveSlot(which){
   renderAll();
   $("activeSlotTag").textContent = 'SLOT ' + which;
   // schimba si destinatia de cautare
-  document.querySelectorAll('.seg-btn[data-slot]').forEach(b=>{
+  document.querySelectorAll('.seg-btn[data-slot]:not(.src-slot-btn)').forEach(b=>{
     b.classList.toggle('active', b.dataset.slot === which);
   });
 }
@@ -153,7 +158,7 @@ document.querySelectorAll('.src-tab').forEach(tab => {
     document.querySelectorAll('.src-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     const src = tab.dataset.src;
-    const map = { preset:'srcPresetPanel', ucsc:'srcUcscPanel', manual:'srcManualPanel' };
+    const map = { preset:'srcPresetPanel', ncbi:'srcNcbiPanel', ucsc:'srcUcscPanel', manual:'srcManualPanel' };
     Object.values(map).forEach(id => { const el = $(id); if (el) el.style.display='none'; });
     const tgt = $(map[src]); if (tgt) tgt.style.display='block';
   });
@@ -473,14 +478,27 @@ let suggestTimer = null;
 let suggestions = [];
 let selectedSuggest = -1;
 
-// destinatie slot din segmented control de langa search
-document.querySelectorAll('.seg-btn[data-slot]').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.seg-btn[data-slot]').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    setActiveSlot(btn.dataset.slot);
-  });
+// slot global (bara search + workspace chips) — NU include panourile surse
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.seg-btn[data-slot]');
+  if (btn && !btn.classList.contains('src-slot-btn')) setActiveSlot(btn.dataset.slot);
 });
+
+// slot local per panou sursa — nu schimba slotul global activ
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.src-slot-btn[data-slot]');
+  if (!btn) return;
+  const panel = btn.closest('.src-panel');
+  if (!panel) return;
+  panel.querySelectorAll('.src-slot-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  panel.dataset.targetSlot = btn.dataset.slot;
+});
+
+function getPanelTarget(panelId){
+  const p = $(panelId);
+  return (p && p.dataset.targetSlot) || 'A';
+}
 
 function closeSuggest(){ $("searchSuggest").classList.remove('open'); selectedSuggest = -1; }
 function renderSuggest(){
@@ -581,7 +599,8 @@ async function runGlobalSearch(){
     const dna = rec.seq.toUpperCase().replace(/[^ATGC]/g, '');
     if (!dna){ logEvt('secventa vida de la NCBI', 'err'); return; }
     const acc = (rec.header.match(/^(\S+)/)||[])[1] || ids[0];
-    setSequence(dna, `${q} (${org}) CDS · ${acc}`);
+    // bara globala nu are panou → merge in slotul activ curent
+    setSequence(dna, `${q} (${org}) CDS · ${acc}`, 'ok', acc);
   } catch(e){
     logEvt('cautare eroare: '+e.message, 'err');
   }
@@ -620,11 +639,62 @@ async function fetchFromUCSC(){
     const dna = (qRes.dna||'').toUpperCase();
     if (!dna){ $("ucscStatus").textContent = 'secventa goala'; return; }
     $("ucscStatus").innerHTML = `<b>${esc(symbol)}</b> · ${chrom}:${startG.toLocaleString()}-${fetchEnd.toLocaleString()} (${dna.length} bp)`;
+    state.active = getPanelTarget('srcUcscPanel');
     setSequence(dna, `UCSC ${symbol} (${genome}) ${chrom}:${startG}-${fetchEnd}`, 'ok');
   } catch(e){ $("ucscStatus").textContent = 'eroare: '+e.message; logEvt('UCSC: '+e.message, 'err'); }
 }
 $("btnFetchUCSC").addEventListener("click", fetchFromUCSC);
 $("ucscGene").addEventListener("keydown", e => { if (e.key === 'Enter') fetchFromUCSC(); });
+
+// ====== NCBI panel (acces direct / simbol + organism) ======
+async function fetchFromNCBI(){
+  const query = $("ncbiQuery").value.trim();
+  const org = $("ncbiOrg").value;
+  const seqType = $("ncbiSeqType").value;
+  if (!query){ logEvt('NCBI: query gol', 'err'); return; }
+  $("ncbiStatus").textContent = `caut ${query}...`;
+  try {
+    let accId = null;
+    // detecteaza numar de acces (NM_, XM_, NC_, NR_, XR_ etc.)
+    if (/^[A-Z]{1,2}_\d+/.test(query.toUpperCase())){
+      accId = query;
+    } else {
+      // cauta dupa simbol gena
+      const filter = seqType === 'cds'
+        ? 'refseq_select[filter]'
+        : 'refseq[filter] AND biomol_mrna[PROP]';
+      const term = `${query}[Gene Name] AND ${org}[orgn] AND ${filter}`;
+      const sr = await fetch(`${NCBI_API}/esearch.fcgi?db=nuccore&term=${encodeURIComponent(term)}&retmode=json&retmax=1`);
+      const sj = await sr.json();
+      const ids = (sj.esearchresult && sj.esearchresult.idlist) || [];
+      if (!ids.length){
+        $("ncbiStatus").textContent = `negasit: ${query} in ${org}`;
+        logEvt(`NCBI: ${query} nu gasit in ${org}`, 'err');
+        return;
+      }
+      accId = ids[0];
+    }
+    const rettype = seqType === 'cds' ? 'fasta_cds_na' : 'fasta';
+    const fr = await fetch(`${NCBI_API}/efetch.fcgi?db=nuccore&id=${encodeURIComponent(accId)}&rettype=${rettype}&retmode=text`);
+    const fasta = await fr.text();
+    const rec = parseFasta(fasta);
+    const dna = rec.seq.toUpperCase().replace(/[^ATGC]/g, '');
+    if (!dna){
+      $("ncbiStatus").textContent = 'secventa vida sau format invalid';
+      logEvt('NCBI: secventa vida', 'err');
+      return;
+    }
+    const shortHdr = (rec.header || query).substring(0, 55);
+    $("ncbiStatus").innerHTML = `<b>${esc(query)}</b> · ${dna.length} bp · <span style="color:var(--dim)">${esc(shortHdr)}</span>`;
+    state.active = getPanelTarget('srcNcbiPanel');
+    setSequence(dna, `NCBI ${query} (${seqType}) · ${dna.length} bp`, 'ok', accId);
+  } catch(e){
+    $("ncbiStatus").textContent = 'eroare: '+e.message;
+    logEvt('NCBI panel: '+e.message, 'err');
+  }
+}
+$("btnFetchNCBI").addEventListener("click", fetchFromNCBI);
+$("ncbiQuery").addEventListener("keydown", e => { if (e.key === 'Enter') fetchFromNCBI(); });
 
 // ====== COMPARATIE A vs B ======
 function simpleAlign(a, b){
@@ -677,10 +747,65 @@ function renderCompare(){
   $("compareCard").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   return res;
 }
-$("btnCompare").addEventListener("click", renderCompare);
+$("btnCompare").addEventListener("click", () => {
+  renderCompare();
+  $("similarRegionsView").style.display = 'none';
+});
+
+// ====== REGIUNI SIMILARE ======
+function findSimilarRegions(a, b, minLen){
+  minLen = minLen || 10;
+  const L = Math.min(a.length, b.length);
+  const regions = [];
+  let start = null, runLen = 0;
+  for (let i = 0; i <= L; i++){
+    if (i < L && a[i] === b[i]){
+      if (start === null){ start = i; runLen = 1; }
+      else runLen++;
+    } else {
+      if (start !== null && runLen >= minLen)
+        regions.push({ start, len: runLen, seq: a.substr(start, runLen) });
+      start = null; runLen = 0;
+    }
+  }
+  return regions.sort((x, y) => y.len - x.len);
+}
+function renderSimilarRegions(){
+  const A = state.slots.A.seq, B = state.slots.B.seq;
+  const el = $("similarRegionsView");
+  if (!A || !B){
+    logEvt('necesar Slot A si B pentru regiuni similare', 'err'); return;
+  }
+  const regions = findSimilarRegions(A, B);
+  if (!regions.length){
+    el.style.display = 'block';
+    el.innerHTML = '<div class="hint">Nu exista regiuni identice ≥10 bp intre A si B.</div>';
+    return;
+  }
+  const top = regions.slice(0, 12);
+  const totalBp = regions.reduce((s, r) => s + r.len, 0);
+  let html = `<div class="hint" style="margin-bottom:8px">
+    <b>${regions.length}</b> regiuni identice ≥10 bp · <b>${totalBp} bp</b> total conservat
+    ${top.length < regions.length ? ` · afisez top ${top.length}` : ''}
+  </div><div class="similar-list">`;
+  top.forEach((r, i) => {
+    const preview = r.seq.length > 32 ? r.seq.substr(0, 32) + '…' : r.seq;
+    html += `<div class="sim-row">
+      <span class="sim-rank">#${i+1}</span>
+      <span class="sim-len">${r.len} bp</span>
+      <span class="sim-pos">poz ${r.start}–${r.start+r.len-1}</span>
+      <span class="sim-seq">${esc(preview)}</span>
+    </div>`;
+  });
+  html += '</div>';
+  el.style.display = 'block';
+  el.innerHTML = html;
+  logEvt(`regiuni similare: ${regions.length} blocuri identice ≥10bp (${totalBp} bp conservat)`, 'ok');
+}
+$("btnSimilarRegions").addEventListener("click", renderSimilarRegions);
 
 // ====== AI ASSISTANT ======
-let aiMessages = []; // istoric local pentru context simplu (nu trimis intreg la backend)
+const ACTION_PREFIX = 'GENETICA_ACTION:';
 
 function aiAppendMsg(role, text, opts){
   const chat = $("aiChat");
@@ -695,7 +820,6 @@ function aiAppendMsg(role, text, opts){
   return bubble;
 }
 function aiRenderMarkdown(raw){
-  // conversie minima md -> html
   let s = esc(raw);
   s = s.replace(/```([\s\S]*?)```/g, (_, c) => '<pre>'+c+'</pre>');
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -704,11 +828,34 @@ function aiRenderMarkdown(raw){
   return s;
 }
 
+// Extrage actiunile GENETICA_ACTION din text, returneaza textul fara ele
+function extractActions(rawText, executed){
+  const lines = rawText.split('\n');
+  const displayLines = [];
+  const newActions = [];
+  for (const line of lines){
+    const trimmed = line.trim();
+    if (trimmed.startsWith(ACTION_PREFIX)){
+      if (!executed.has(trimmed)){
+        executed.add(trimmed);
+        try {
+          const action = JSON.parse(trimmed.slice(ACTION_PREFIX.length).trim());
+          newActions.push(action);
+        } catch(_){ displayLines.push(line); }
+      }
+    } else {
+      displayLines.push(line);
+    }
+  }
+  return { display: displayLines.join('\n'), newActions };
+}
+
 async function askAI(question){
   if (!question) return;
   aiAppendMsg('user', question);
   const bubble = aiAppendMsg('assistant', '', { typing: true });
-  bubble.setAttribute('data-raw', '');
+  const chat = $("aiChat");
+  const executed = new Set(); // actiuni deja executate in acest turn
 
   const ctx = {
     question,
@@ -721,11 +868,7 @@ async function askAI(question){
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify(ctx),
     });
-    if (!res.ok){
-      bubble.classList.remove('typing');
-      bubble.textContent = 'eroare: '+res.status;
-      return;
-    }
+    if (!res.ok){ bubble.classList.remove('typing'); bubble.textContent = 'eroare: '+res.status; return; }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
@@ -734,7 +877,6 @@ async function askAI(question){
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      // parse SSE (event: X\ndata: Y\n\n)
       let idx;
       while ((idx = buf.indexOf('\n\n')) >= 0){
         const block = buf.slice(0, idx); buf = buf.slice(idx+2);
@@ -748,8 +890,13 @@ async function askAI(question){
         let payload; try { payload = JSON.parse(data); } catch { continue; }
         if (evt === 'text' && payload.text){
           accum += payload.text;
-          bubble.innerHTML = aiRenderMarkdown(accum);
-          $("aiChat").scrollTop = $("aiChat").scrollHeight;
+          const { display, newActions } = extractActions(accum, executed);
+          bubble.innerHTML = aiRenderMarkdown(display);
+          chat.scrollTop = chat.scrollHeight;
+          for (const action of newActions){
+            showActionChip(action, bubble.closest('.ai-msg'));
+            executeLabAction(action.name, action).catch(console.error);
+          }
         } else if (evt === 'error'){
           accum += '\n\n[eroare: ' + (payload.message || '?') + ']';
           bubble.innerHTML = aiRenderMarkdown(accum);
@@ -763,6 +910,181 @@ async function askAI(question){
     bubble.classList.remove('typing');
     bubble.textContent = 'eroare retea: '+e.message;
   }
+}
+
+// ====== LAB ACTIONS ======
+const ACTION_ICONS = {
+  load_gene:'📥', highlight_region:'🔦', run_crispr:'✂',
+  compare_slots:'⇄', transcribe:'📜', translate_protein:'🧬',
+  build_feature:'⚙'
+};
+
+function showActionChip(action, msgWrap){
+  const chat = $("aiChat");
+  const chip = document.createElement('div');
+  chip.className = 'ai-action-chip';
+  const ico = ACTION_ICONS[action.name] || '⚡';
+  const detail = action.gene || action.guide || action.description || '';
+  chip.innerHTML = `${ico} <b>${esc(action.name)}</b>${detail ? ': '+esc(detail.substring(0,50)) : ''}`;
+  // insert after the bot message
+  const next = msgWrap ? msgWrap.nextSibling : null;
+  chat.insertBefore(chip, next);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function executeLabAction(name, input){
+  switch(name){
+    case 'load_gene':         await executeLoadGene(input); break;
+    case 'highlight_region':  executeHighlightRegion(input); break;
+    case 'run_crispr':        executeRunCrispr(input); break;
+    case 'compare_slots':     renderCompare(); logEvt('AI: compara A↔B', 'ok'); break;
+    case 'transcribe':        doTranscribe(); break;
+    case 'translate_protein': doTranslate(); break;
+    case 'build_feature':     await executeBuildFeature(input); break;
+  }
+}
+
+async function executeLoadGene(input){
+  const gene = input.gene || '';
+  const org  = input.organism || 'human';
+  const slot = (input.slot === 'B') ? 'B' : 'A';
+  const seqType = input.seq_type || 'cds';
+  if (!gene){ logEvt('AI load_gene: gena lipsa', 'err'); return; }
+  state.active = slot;
+  logEvt(`AI: incarc ${gene} (${org}) → Slot ${slot}...`, 'info');
+  try {
+    let accId;
+    if (/^[A-Z]{1,2}_\d+/.test(gene.toUpperCase())){
+      accId = gene;
+    } else {
+      const filter = seqType === 'cds' ? 'refseq_select[filter]' : 'refseq[filter] AND biomol_mrna[PROP]';
+      const term = `${gene}[Gene Name] AND ${org}[orgn] AND ${filter}`;
+      const sr = await fetch(`${NCBI_API}/esearch.fcgi?db=nuccore&term=${encodeURIComponent(term)}&retmode=json&retmax=1`);
+      const sj = await sr.json();
+      const ids = (sj.esearchresult && sj.esearchresult.idlist) || [];
+      if (!ids.length){ logEvt(`AI: ${gene} nu gasit in ${org}`, 'err'); return; }
+      accId = ids[0];
+    }
+    const rettype = seqType === 'cds' ? 'fasta_cds_na' : 'fasta';
+    const fr = await fetch(`${NCBI_API}/efetch.fcgi?db=nuccore&id=${encodeURIComponent(accId)}&rettype=${rettype}&retmode=text`);
+    const fasta = await fr.text();
+    const rec = parseFasta(fasta);
+    const dna = rec.seq.toUpperCase().replace(/[^ATGC]/g, '');
+    if (!dna){ logEvt('AI: secventa vida', 'err'); return; }
+    setSequence(dna, `AI: ${gene} (${org}) · ${dna.length} bp`, 'ok', accId);
+  } catch(e){ logEvt('AI load_gene: '+e.message, 'err'); }
+}
+
+function executeHighlightRegion(input){
+  const s = parseInt(input.start, 10) || 0;
+  const e = parseInt(input.end, 10) || s + 1;
+  const cls = input.cls || 'target';
+  state.highlights = [{start: s, len: e - s, cls}];
+  renderDNA();
+  $("dnaView").scrollIntoView({behavior:'smooth', block:'nearest'});
+  logEvt(`AI: highlight poz ${s}–${e}`, 'info');
+}
+
+function executeRunCrispr(input){
+  const guide = input.guide || '';
+  const mode  = input.mode || 'knockout';
+  const tmpl  = input.template || '';
+  if (!guide){ logEvt('AI CRISPR: ghid lipsa', 'err'); return; }
+  const r = BIO.crisprCut(state.seq, guide, mode, tmpl);
+  if (!r.ok){ logEvt('AI CRISPR: '+r.reason, 'err'); return; }
+  const hit = r.applied;
+  state.highlights = [
+    {start: hit.start, len: 20, cls: 'target'},
+    {start: hit.pam,   len: 3,  cls: 'pam'},
+    {start: hit.cut,   len: 1,  cls: 'cut'},
+  ];
+  renderAll();
+  setTimeout(()=>{
+    state.prevSeq = state.seq;
+    state.seq = r.newSeq;
+    state.highlights = [{start: Math.max(0, hit.cut-3), len: Math.max(1, Math.abs(r.newSeq.length - state.prevSeq.length)+4), cls:'mut'}];
+    renderAll(); renderMutSummary();
+    logEvt(`AI CRISPR ${mode} la poz ${hit.cut} (fir ${hit.strand})`, 'crispr');
+  }, 1200);
+  logEvt(`AI CRISPR: ghid gasit la poz ${hit.start}`, 'crispr');
+}
+
+async function executeBuildFeature(input){
+  const description = input.description || '';
+  if (!description){ logEvt('AI build_feature: descriere lipsa', 'err'); return; }
+  const chat = $("aiChat");
+  const termId = 'aiBuildBody_' + Date.now();
+  const headId = 'aiBuildHead_' + Date.now();
+  const term = document.createElement('div');
+  term.className = 'ai-build-terminal running';
+  term.innerHTML = `
+    <div class="ai-term-header" id="${headId}">
+      <span class="ai-term-pulse"></span>
+      <span class="ai-term-title">⚙ Claude Code — lucreaza...</span>
+      <span class="ai-term-elapsed">0s</span>
+    </div>
+    <div class="ai-term-body" id="${termId}"></div>`;
+  chat.appendChild(term);
+  chat.scrollTop = chat.scrollHeight;
+  const body = document.getElementById(termId);
+  const head = document.getElementById(headId);
+  const addLine = (txt, cls) => {
+    if (!txt) return;
+    const d = document.createElement('div');
+    d.className = 'ai-term-line' + (cls ? ' '+cls : '');
+    d.textContent = txt;
+    body.appendChild(d);
+    if (body.children.length > 200) body.removeChild(body.firstChild);
+    body.scrollTop = body.scrollHeight;
+    chat.scrollTop = chat.scrollHeight;
+  };
+  addLine('$ claude --dangerously-skip-permissions -p "..."', 'cmd');
+  try {
+    const resp = await fetch('/api/lab/build', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({description})
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true){
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0){
+        const block = buf.slice(0, idx); buf = buf.slice(idx+2);
+        const bLines = block.split('\n');
+        let evt = 'message', data = '';
+        for (const ln of bLines){
+          if (ln.startsWith('event: ')) evt = ln.slice(7);
+          else if (ln.startsWith('data: ')) data += ln.slice(6);
+        }
+        if (!data) continue;
+        let pl; try { pl = JSON.parse(data); } catch { continue; }
+        if (evt === 'build_progress'){
+          const line = pl.line || '';
+          const cls = line.startsWith('$') ? 'cmd' : line.startsWith('  ') ? 'out' : '';
+          addLine(line, cls);
+        } else if (evt === 'build_heartbeat'){
+          const elEl = head.querySelector('.ai-term-elapsed');
+          if (elEl) elEl.textContent = (pl.elapsed || 0) + 's';
+        } else if (evt === 'build_done'){
+          term.classList.remove('running');
+          const elEl = head.querySelector('.ai-term-elapsed');
+          if (elEl) elEl.remove();
+          const pulse = head.querySelector('.ai-term-pulse');
+          if (pulse) pulse.remove();
+          const title = head.querySelector('.ai-term-title');
+          if (title) title.textContent = pl.success ? '✓ Implementare completa' : '✗ Eroare implementare';
+          addLine(pl.message || '', pl.success ? 'ok' : 'err');
+          if (pl.success){
+            setTimeout(()=>{ addLine('Reincarcand laboratorul...', 'ok'); setTimeout(()=>location.reload(), 1400); }, 700);
+          }
+        }
+      }
+    }
+  } catch(e){ addLine('Eroare: '+e.message, 'err'); term.classList.remove('running'); }
 }
 
 $("btnAiSend").addEventListener("click", () => {
@@ -915,6 +1237,180 @@ $("btnDemoAuto").addEventListener("click", runDemo);
   }
   loop();
 })();
+
+// ====== CARACTERISTICI GENOMICE (NCBI Feature Table) ======
+const FEAT_COLORS = {
+  gene:           'var(--lime)',
+  CDS:            'var(--cy)',
+  mat_peptide:    'var(--ye)',
+  sig_peptide:    '#ffaa33',
+  transit_peptide:'#ffcc88',
+  regulatory:     'var(--mg)',
+  misc_feature:   'var(--or)',
+  repeat_region:  '#9966ff',
+  ncRNA:          '#ff88bb',
+  exon:           '#44ccff',
+  intron:         '#446688',
+  "5'UTR":        '#88aaff',
+  "3'UTR":        '#aabbff',
+};
+
+function parseFT(text){
+  const features = [];
+  let cur = null;
+  for (const line of text.split(/\r?\n/)){
+    if (!line.trim() || line.startsWith('>')) continue;
+    if (/^[\d<>]/.test(line)){
+      const parts = line.trim().split('\t');
+      if (parts.length >= 3){
+        if (cur) features.push(cur);
+        const s = parseInt(parts[0].replace(/\D/g,''), 10);
+        const e = parseInt(parts[1].replace(/\D/g,''), 10);
+        cur = (!isNaN(s) && !isNaN(e))
+          ? { type: parts[2].trim(), start: Math.min(s,e)-1, end: Math.max(s,e), quals:{} }
+          : null;
+      }
+    } else if (line.startsWith('\t\t\t') && cur){
+      const q = line.trim().split('\t');
+      if (q.length >= 2 && !cur.quals[q[0]]) cur.quals[q[0]] = q[1];
+    }
+  }
+  if (cur) features.push(cur);
+  return features.filter(f => f && f.type !== 'source');
+}
+
+function renderFeatureMap(features, seqLen){
+  const tracks = {};
+  const ORDER = ['gene','CDS','mat_peptide','sig_peptide','transit_peptide','regulatory','misc_feature','repeat_region','ncRNA','exon',"5'UTR","3'UTR"];
+  for (const f of features){
+    if (!tracks[f.type]) tracks[f.type] = [];
+    tracks[f.type].push(f);
+  }
+  const keys = [...ORDER.filter(t=>tracks[t]), ...Object.keys(tracks).filter(t=>!ORDER.includes(t))];
+
+  // ruler
+  let html = '<div class="feat-ruler">';
+  for (let i = 0; i <= 5; i++){
+    const pct = i * 20;
+    html += `<span class="feat-ruler-mark" style="left:${pct}%">${Math.round(seqLen*pct/100).toLocaleString()}</span>`;
+  }
+  html += '</div>';
+
+  for (const type of keys){
+    const color = FEAT_COLORS[type] || 'var(--dim)';
+    html += `<div class="feat-track-row"><span class="feat-type-lbl" style="color:${color}">${esc(type)}</span><div class="feat-lane">`;
+    for (const f of tracks[type]){
+      const left = (f.start / seqLen * 100).toFixed(3);
+      const w = Math.max(0.5, (f.end - f.start) / seqLen * 100).toFixed(3);
+      const name = f.quals.product || f.quals.gene || f.quals.note || '';
+      html += `<div class="feat-block" style="left:${left}%;width:${w}%;background:${color}"
+        title="${esc(type)}: ${esc(name)} (${f.start+1}–${f.end})"
+        data-start="${f.start}" data-end="${f.end}">
+        <span class="feat-block-lbl">${esc(name.substring(0,20))}</span></div>`;
+    }
+    html += '</div></div>';
+  }
+  $("featMap").innerHTML = html;
+
+  // list
+  const sorted = [...features].sort((a,b)=>a.start-b.start);
+  let lHtml = '';
+  for (const f of sorted){
+    const name = f.quals.product || f.quals.gene || f.quals.note || '—';
+    const color = FEAT_COLORS[f.type] || 'var(--dim)';
+    lHtml += `<div class="feat-row" data-start="${f.start}" data-end="${f.end}">
+      <span class="feat-row-type" style="color:${color}">${esc(f.type)}</span>
+      <span class="feat-row-pos">${(f.start+1).toLocaleString()}–${f.end.toLocaleString()}</span>
+      <span class="feat-row-len">${(f.end-f.start).toLocaleString()} bp</span>
+      <span class="feat-row-name">${esc(name)}</span>
+    </div>`;
+  }
+  $("featList").innerHTML = lHtml || '<div class="hint">Nicio caracteristica.</div>';
+
+  const hl = el => {
+    const s=parseInt(el.dataset.start,10), e=parseInt(el.dataset.end,10);
+    state.highlights=[{start:s, len:e-s, cls:'hl'}];
+    renderDNA();
+    $("dnaView").scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+  $("featList").querySelectorAll('.feat-row').forEach(r=>r.addEventListener('click',()=>hl(r)));
+  $("featMap").querySelectorAll('.feat-block').forEach(b=>b.addEventListener('click',()=>hl(b)));
+}
+
+async function fetchAndShowFeatures(){
+  const slot = state.slots[state.active];
+  $("featCard").style.display = 'block';
+  $("featSlotTag").textContent = 'SLOT ' + state.active;
+  $("featMap").innerHTML = '';
+  $("featList").innerHTML = '';
+  if (!slot.acc){
+    $("featStatus").innerHTML = '<span style="color:var(--rd)">Secventa nu a fost incarcata din NCBI. Cauta o gena din bara de sus sau din tab-ul NCBI.</span>';
+    return;
+  }
+  $("featStatus").textContent = 'Se incarca adnotarile de la NCBI...';
+  try {
+    const resp = await fetch(`${NCBI_API}/efetch.fcgi?db=nuccore&id=${encodeURIComponent(slot.acc)}&rettype=ft&retmode=text`);
+    const text = await resp.text();
+    if (!text.trim() || text.trim().toLowerCase().startsWith('error')){
+      $("featStatus").textContent = 'Nu exista feature table pentru ' + slot.acc;
+      logEvt('Caracteristici: negasit pentru '+slot.acc, 'err');
+      return;
+    }
+    const features = parseFT(text);
+    if (!features.length){
+      $("featStatus").textContent = 'Nicio caracteristica in feature table.';
+      return;
+    }
+    $("featStatus").innerHTML = `<b>${features.length}</b> caracteristici pentru <b>${esc(slot.acc)}</b> · click pe o intrare pentru highlight`;
+    renderFeatureMap(features, slot.seq.length || 1);
+    logEvt(`caracteristici: ${features.length} features (${slot.acc})`, 'ok');
+  } catch(e){
+    $("featStatus").textContent = 'eroare: '+e.message;
+    logEvt('Caracteristici: '+e.message, 'err');
+  }
+}
+$("btnFeatures").addEventListener("click", fetchAndShowFeatures);
+
+// ====== JUMP TO POSITION ======
+let _jumpTimer = null;
+
+function showJumpMsg(msg, isErr){
+  const el = $('jumpMsg');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isErr ? 'var(--rd)' : 'var(--lime)';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.textContent = ''; }, 3500);
+}
+
+function jumpToPosition(rawPos){
+  const seq = state.seq;
+  if (!seq){
+    showJumpMsg('Nu ai secventa incarcata.', true);
+    return;
+  }
+  const pos = parseInt(rawPos, 10);
+  if (isNaN(pos) || pos < 0 || pos >= seq.length){
+    showJumpMsg('Pozitie invalida (0–' + (seq.length - 1) + ')', true);
+    return;
+  }
+  const hlLen = Math.min(3, seq.length - pos);
+  // pastreaza highlights existente (non-jump) si adauga jump highlight
+  const existing = state.highlights.filter(h => !h._jump);
+  state.highlights = [...existing, { start: pos, len: hlLen, cls: 'hl', _jump: true }];
+  renderDNA();
+  const target = $('dnaView').querySelector('.base.hl');
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  showJumpMsg('poz ' + pos, false);
+  clearTimeout(_jumpTimer);
+  _jumpTimer = setTimeout(() => {
+    state.highlights = state.highlights.filter(h => !h._jump);
+    renderDNA();
+  }, 3000);
+}
+
+$('btnJump').addEventListener('click', () => jumpToPosition($('jumpPos').value));
+$('jumpPos').addEventListener('keydown', e => { if (e.key === 'Enter') jumpToPosition($('jumpPos').value); });
 
 // ---------- init ----------
 initPresets();

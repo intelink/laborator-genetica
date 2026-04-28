@@ -6,10 +6,14 @@ Frontend static (public/) + endpoint SSE pentru asistent AI Claude.
 from pathlib import Path
 import json
 import logging
+import queue
+import subprocess
+import threading
+import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
-from asistent import streaming_ask
+from asistent import streaming_ask, CLAUDE_BIN, LAB_DIR
 
 APP_DIR = Path(__file__).resolve().parent
 PUBLIC = APP_DIR / "public"
@@ -63,6 +67,147 @@ def ai_ask():
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@app.route("/api/lab/build", methods=["POST"])
+def lab_build():
+    """Spawneaza claude --dangerously-skip-permissions pentru a implementa un feature nou."""
+    data = request.get_json(silent=True) or {}
+    description = (data.get("description") or "").strip()
+    if not description:
+        return jsonify({"error": "description required"}), 400
+
+    def gen():
+        prompt = (
+            f"Esti Claude Code si lucrezi pe proiectul Laborator Genetica Moleculara.\n"
+            f"Calea proiectului: {LAB_DIR}\n\n"
+            f"Trebuie sa implementezi urmatoarea functionalitate noua:\n\n"
+            f"{description}\n\n"
+            f"Fisierele principale:\n"
+            f"- public/index.html — interfata HTML\n"
+            f"- public/js/app.js — logica frontend JavaScript\n"
+            f"- public/css/style.css — stiluri CSS\n"
+            f"- server.py — server Flask\n"
+            f"- asistent.py — asistent AI\n\n"
+            f"Implementeaza COMPLET ce s-a cerut. Fa toate modificarile necesare.\n"
+            f"La sfarsit scrie exact pe o linie: IMPLEMENTARE_COMPLETA"
+        )
+        cmd = [
+            CLAUDE_BIN,
+            "--dangerously-skip-permissions",
+            "-p", prompt,
+            "--allowedTools", "Bash,Write,Edit,Read,TodoWrite",
+            "--output-format", "stream-json",
+            "--include-partial-messages",
+            "--verbose",
+        ]
+
+        out: queue.Queue = queue.Queue()
+        finished = threading.Event()
+        start_ts = time.time()
+
+        def _emit_progress(line: str):
+            out.put(f"event: build_progress\ndata: {json.dumps({'line': line}, ensure_ascii=False)}\n\n")
+
+        def _runner():
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, bufsize=1, cwd=str(LAB_DIR)
+                )
+                stderr_lines: list[str] = []
+
+                def _read_err():
+                    for ln in proc.stderr:
+                        stderr_lines.append(ln)
+
+                threading.Thread(target=_read_err, daemon=True).start()
+
+                seen_tool_ids: set = set()
+
+                for raw in proc.stdout:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = json.loads(raw)
+                    except json.JSONDecodeError:
+                        _emit_progress(raw[:200])
+                        continue
+
+                    et = ev.get("type")
+                    if et == "assistant":
+                        for blk in ev.get("message", {}).get("content", []):
+                            btype = blk.get("type")
+                            if btype == "text":
+                                for ln in blk.get("text", "").split("\n"):
+                                    if ln.strip():
+                                        _emit_progress(ln)
+                            elif btype == "tool_use":
+                                tid = blk.get("id", "")
+                                if tid in seen_tool_ids:
+                                    continue
+                                seen_tool_ids.add(tid)
+                                name = blk.get("name", "tool")
+                                inp = blk.get("input", {})
+                                if name == "Bash":
+                                    cmd_str = inp.get("command", "")[:120]
+                                    _emit_progress(f"$ {cmd_str}")
+                                elif name in ("Write", "Edit"):
+                                    path = inp.get("file_path", inp.get("path", "?"))
+                                    _emit_progress(f"✎ {name}: {path}")
+                                elif name == "Read":
+                                    path = inp.get("file_path", inp.get("path", "?"))
+                                    _emit_progress(f"📖 Read: {path}")
+                                else:
+                                    _emit_progress(f"⚙ {name}({json.dumps(inp)[:80]})")
+                    elif et == "user":
+                        for blk in ev.get("message", {}).get("content", []):
+                            if blk.get("type") == "tool_result":
+                                inner = blk.get("content", [])
+                                if isinstance(inner, list):
+                                    for ib in inner:
+                                        if ib.get("type") == "text":
+                                            txt = ib.get("text", "").strip()
+                                            for ln in txt.split("\n")[:8]:
+                                                if ln.strip():
+                                                    _emit_progress(f"  {ln}")
+                                elif isinstance(inner, str) and inner.strip():
+                                    for ln in inner.strip().split("\n")[:8]:
+                                        if ln.strip():
+                                            _emit_progress(f"  {ln}")
+
+                proc.wait(timeout=30)
+                ok = proc.returncode == 0
+                msg = "Implementare completa!" if ok else f"Eroare (cod {proc.returncode})"
+                out.put(f"event: build_done\ndata: {json.dumps({'success': ok, 'message': msg})}\n\n")
+            except FileNotFoundError:
+                out.put(f"event: build_done\ndata: {json.dumps({'success': False, 'message': 'claude CLI indisponibil'})}\n\n")
+            except Exception as e:
+                out.put(f"event: build_done\ndata: {json.dumps({'success': False, 'message': str(e)})}\n\n")
+            finally:
+                finished.set()
+                out.put(None)
+
+        def _heartbeat():
+            while not finished.wait(2.5):
+                elapsed = int(time.time() - start_ts)
+                out.put(f"event: build_heartbeat\ndata: {json.dumps({'elapsed': elapsed})}\n\n")
+
+        threading.Thread(target=_runner, daemon=True).start()
+        threading.Thread(target=_heartbeat, daemon=True).start()
+
+        while True:
+            item = out.get()
+            if item is None:
+                break
+            yield item
+
+    return Response(
+        stream_with_context(gen()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

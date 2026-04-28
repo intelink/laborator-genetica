@@ -25,18 +25,30 @@
     <!-- GLOBAL SEARCH -->
     <div class="search-wrap">
       <div class="search-ic">🔍</div>
+      <span class="search-src-badge">NCBI</span>
       <input type="text" id="globalSearch" class="holo-input" autocomplete="off"
              placeholder="Cauta o gena (BRCA1, p53, HBB, insulin mouse)..." spellcheck="false">
       <div class="search-organ">
         <select id="searchOrg" class="holo-input">
-          <option value="human">Human</option>
-          <option value="mouse">Mouse</option>
-          <option value="rat">Rat</option>
-          <option value="zebrafish">Zebrafish</option>
-          <option value="fly">Fly</option>
-          <option value="yeast">Yeast</option>
-          <option value="e.coli">E. coli</option>
-          <option value="arabidopsis">Arabidopsis</option>
+          <optgroup label="Eucariote">
+            <option value="human">Human</option>
+            <option value="mouse">Mouse</option>
+            <option value="rat">Rat</option>
+            <option value="zebrafish">Zebrafish</option>
+            <option value="fly">Fly</option>
+            <option value="yeast">Yeast</option>
+            <option value="e.coli">E. coli</option>
+            <option value="arabidopsis">Arabidopsis</option>
+          </optgroup>
+          <optgroup label="Virusuri">
+            <option value="HIV-1">HIV-1</option>
+            <option value="SARS-CoV-2">SARS-CoV-2</option>
+            <option value="Middle East respiratory syndrome coronavirus">MERS-CoV</option>
+            <option value="Influenza A virus">Influenza A</option>
+            <option value="Hepatitis B virus">Hepatitis B</option>
+            <option value="Hepatitis C virus">Hepatitis C</option>
+            <option value="Zaire ebolavirus">Ebola</option>
+          </optgroup>
         </select>
       </div>
       <div class="search-slot">
@@ -78,18 +90,65 @@
         <h2>⎈ surse alternative <span class="bar"></span></h2>
         <div class="source-tabs">
           <button class="src-tab active" data-src="preset">Preset</button>
+          <button class="src-tab" data-src="ncbi">NCBI</button>
           <button class="src-tab" data-src="ucsc">UCSC</button>
           <button class="src-tab" data-src="manual">Manual</button>
         </div>
 
-        <div class="src-panel" id="srcPresetPanel">
+        <div class="src-panel" id="srcPresetPanel" data-target-slot="A">
           <label>preset demo</label>
           <select id="presetSel" class="holo-input"></select>
-          <button class="btn holo-btn" id="btnLoadPreset" style="margin-top:8px;width:100%">▶ Incarca preset → Slot activ</button>
+          <div class="src-slot-row">
+            <span>→ destinatie:</span>
+            <div class="seg"><button class="seg-btn src-slot-btn active" data-slot="A">Slot A</button><button class="seg-btn src-slot-btn" data-slot="B">Slot B</button></div>
+          </div>
+          <button class="btn holo-btn" id="btnLoadPreset" style="margin-top:6px;width:100%">▶ Incarca preset</button>
           <div class="hint" id="presetDesc" style="margin-top:8px"></div>
         </div>
 
-        <div class="src-panel" id="srcUcscPanel" style="display:none">
+        <div class="src-panel" id="srcNcbiPanel" style="display:none" data-target-slot="A">
+          <label>acces / simbol gena</label>
+          <input type="text" id="ncbiQuery" value="NM_000518" spellcheck="false" class="holo-input"
+                 placeholder="NM_000518, BRCA1, TP53...">
+          <label style="margin-top:10px">organism (pt. simbol)</label>
+          <select id="ncbiOrg" class="holo-input">
+            <optgroup label="Eucariote">
+              <option value="human">Human</option>
+              <option value="mouse">Mouse</option>
+              <option value="rat">Rat</option>
+              <option value="zebrafish">Zebrafish</option>
+              <option value="fly">Fly</option>
+              <option value="yeast">Yeast</option>
+              <option value="e.coli">E. coli</option>
+              <option value="arabidopsis">Arabidopsis</option>
+            </optgroup>
+            <optgroup label="Virusuri">
+              <option value="HIV-1">HIV-1</option>
+              <option value="SARS-CoV-2">SARS-CoV-2</option>
+              <option value="Middle East respiratory syndrome coronavirus">MERS-CoV</option>
+              <option value="Influenza A virus">Influenza A</option>
+              <option value="Hepatitis B virus">Hepatitis B</option>
+              <option value="Hepatitis C virus">Hepatitis C</option>
+              <option value="Zaire ebolavirus">Ebola</option>
+            </optgroup>
+          </select>
+          <label style="margin-top:10px">tip secventa</label>
+          <select id="ncbiSeqType" class="holo-input">
+            <option value="cds">CDS — codificant (fara introni)</option>
+            <option value="mrna">mRNA complet</option>
+            <option value="genomic">Genomic (cu introni)</option>
+          </select>
+          <div class="src-slot-row">
+            <span>→ destinatie:</span>
+            <div class="seg"><button class="seg-btn src-slot-btn active" data-slot="A">Slot A</button><button class="seg-btn src-slot-btn" data-slot="B">Slot B</button></div>
+          </div>
+          <button class="btn holo-btn" id="btnFetchNCBI" style="margin-top:6px;width:100%">⬇ Incarca din NCBI</button>
+          <div class="hint" id="ncbiStatus" style="margin-top:8px;word-break:break-word">
+            <b>NCBI RefSeq</b> — NM_ (mRNA), NC_ (cromosom). Sau scrie simbolul genei (HBB, BRCA1) si alege organism.
+          </div>
+        </div>
+
+        <div class="src-panel" id="srcUcscPanel" style="display:none" data-target-slot="A">
           <label>simbol gena</label>
           <input type="text" id="ucscGene" value="HBB" spellcheck="false" class="holo-input">
           <label style="margin-top:10px">organism</label>
@@ -104,14 +163,22 @@
           </select>
           <label style="margin-top:10px">max lungime (bp)</label>
           <input type="number" id="ucscMaxLen" value="500" min="30" max="10000" class="holo-input">
-          <button class="btn holo-btn" id="btnFetchUCSC" style="margin-top:10px;width:100%">⬇ Genomic (UCSC)</button>
+          <div class="src-slot-row">
+            <span>→ destinatie:</span>
+            <div class="seg"><button class="seg-btn src-slot-btn active" data-slot="A">Slot A</button><button class="seg-btn src-slot-btn" data-slot="B">Slot B</button></div>
+          </div>
+          <button class="btn holo-btn" id="btnFetchUCSC" style="margin-top:6px;width:100%">⬇ Genomic (UCSC)</button>
           <div class="hint" id="ucscStatus" style="margin-top:8px;word-break:break-word"><b>Genomic</b> — secventa cromozomiala, cu introni.</div>
         </div>
 
-        <div class="src-panel" id="srcManualPanel" style="display:none">
+        <div class="src-panel" id="srcManualPanel" style="display:none" data-target-slot="A">
           <label>secventa ADN (A/T/G/C)</label>
           <textarea id="seqInput" rows="4" spellcheck="false" placeholder="Lipeste o secventa, ex: ATGGTGCACCTGACTCCTGAG..." class="holo-input"></textarea>
-          <div class="row" style="margin-top:8px">
+          <div class="src-slot-row">
+            <span>→ destinatie:</span>
+            <div class="seg"><button class="seg-btn src-slot-btn active" data-slot="A">Slot A</button><button class="seg-btn src-slot-btn" data-slot="B">Slot B</button></div>
+          </div>
+          <div class="row" style="margin-top:6px">
             <button class="btn holo-btn" id="btnSet">▶ seteaza</button>
             <button class="btn-ghost" id="btnClear">goleste</button>
             <button class="btn-ghost" id="btnRandom">↝ random</button>
@@ -153,6 +220,10 @@
           <button class="tool-btn" data-tool="complement">
             <div class="tool-ic">⟳</div>
             <div class="tool-body"><div class="tool-t">Complement invers</div><div class="tool-d">Firul antisens 5'→3'</div></div>
+          </button>
+          <button class="tool-btn" id="btnFeatures">
+            <div class="tool-ic">🗺</div>
+            <div class="tool-body"><div class="tool-t">Caracteristici genomice</div><div class="tool-d">Gene, CDS, domenii (NCBI)</div></div>
           </button>
           <button class="tool-btn tool-compare" id="btnCompare">
             <div class="tool-ic">⇄</div>
@@ -212,6 +283,12 @@
           <div class="stat mag"><div class="lab">ORF start</div><div class="val" id="statORF">—</div></div>
           <div class="stat ye"><div class="lab">proteina</div><div class="val" id="statAA">— AA</div></div>
         </div>
+        <div class="jump-bar" id="jumpBar">
+          <span class="jump-lbl">salt la pozitie</span>
+          <input type="number" id="jumpPos" min="0" placeholder="ex: 1200" class="holo-input jump-input">
+          <button class="btn holo-btn jump-btn" id="btnJump">Go</button>
+          <span id="jumpMsg" class="jump-msg"></span>
+        </div>
         <div class="dna-viewer has-scan" id="dnaView">
           <div class="scan-line"></div>
           <div class="empty-state">
@@ -233,11 +310,23 @@
         <div id="mutSummary"></div>
       </div>
 
+      <div class="card holo" id="featCard" style="display:none">
+        <h2>🗺 Caracteristici genomice <span class="accent-slot" id="featSlotTag">SLOT A</span> <span class="bar"></span></h2>
+        <div id="featStatus" class="hint" style="margin-bottom:8px"></div>
+        <div id="featMap" class="feat-map"></div>
+        <div id="featList" class="feat-list"></div>
+        <div class="hint" style="margin-top:8px">Click pe o caracteristica → highlight in vizualizatorul ADN de sus</div>
+      </div>
+
       <div class="card holo" id="compareCard" style="display:none">
         <h2>⇄ Comparatie A ↔ B <span class="accent-slot" id="compareIdentity">—</span> <span class="bar"></span></h2>
         <div id="compareStats" class="compare-stats"></div>
         <div class="compare-view" id="compareView"></div>
         <div class="hint" style="margin-top:8px">Verde = match · rosu = mismatch · gri = gap. Pozitiile rosii sunt candidatii pentru editare.</div>
+        <div style="margin-top:10px">
+          <button class="btn-ghost" id="btnSimilarRegions">⭐ Regiuni similare (≥10 bp identice)</button>
+        </div>
+        <div id="similarRegionsView" style="display:none;margin-top:8px"></div>
       </div>
 
       <div class="card holo" id="gelCard" style="display:none">
