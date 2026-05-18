@@ -175,11 +175,429 @@ function gelBands(fragments) {
   return sizes.sort((a, b) => b - a);
 }
 
+// SeqVerify: valideaza integritatea unei secvente ADN.
+// Returneaza lista de checks cu status 'ok'|'warn'|'fail' + statistici.
+function verifySeq(rawDna) {
+  const upper = (rawDna || '').toUpperCase();
+  const stripped = upper.replace(/\s/g, '');
+  const dna = stripped.replace(/[^ATGC]/g, '');
+  const ambiguous = stripped.length - dna.length;
+  const checks = [];
+
+  const add = (id, label, status, detail) => checks.push({ id, label, status, detail });
+
+  add('valid_bases', 'Baze valide (A/T/G/C)',
+    ambiguous === 0 ? 'ok' : ambiguous <= 5 ? 'warn' : 'fail',
+    ambiguous === 0 ? 'Toate bazele sunt A/T/G/C'
+      : ambiguous + ' caractere ambigue eliminate din secventa');
+
+  add('length', 'Lungime minima (≥9 bp)',
+    dna.length >= 9 ? 'ok' : 'fail',
+    dna.length + ' bp' + (dna.length < 9 ? ' — prea scurta pentru un ORF' : ''));
+
+  const gcCount = (dna.match(/[GC]/g) || []).length;
+  const gcPct = dna.length > 0 ? Math.round(gcCount / dna.length * 100) : 0;
+  add('gc_content', 'GC content (30–75%)',
+    gcPct >= 30 && gcPct <= 75 ? 'ok' : 'warn',
+    gcPct + '%' + (gcPct < 30 ? ' — AT-bogata (posibil organism cu GC scazut)' : gcPct > 75 ? ' — GC-bogata' : ' — in parametri normali'));
+
+  const orf = findORFAndTranslate(dna);
+  add('start_codon', 'Codon start ATG',
+    orf.start >= 0 ? 'ok' : 'fail',
+    orf.start >= 0
+      ? 'ATG la pozitia ' + orf.start + ' (frame ' + orf.frame + ')'
+      : 'Niciun ATG gasit in secventa');
+
+  let passed = 0, warned = 0, failed = 0;
+
+  if (orf.start >= 0) {
+    const prot = orf.protein;
+    const hasStop = prot.endsWith('*');
+    const internalStops = (prot.replace(/\*$/, '').match(/\*/g) || []).length;
+    const aaCount = prot.replace(/\*$/, '').length;
+    const stopPos = hasStop ? orf.start + prot.length * 3 : -1;
+
+    add('stop_codon', 'Codon stop (TAA/TAG/TGA)',
+      hasStop ? 'ok' : 'warn',
+      hasStop ? 'Stop la pozitia ' + (stopPos - 3) + '–' + stopPos : 'ORF incomplet — lipseste codonul stop');
+
+    add('no_internal_stops', 'Fara stop codoni prematuri',
+      internalStops === 0 ? 'ok' : 'fail',
+      internalStops === 0 ? 'ORF fara intreruperi'
+        : internalStops + ' stop codon' + (internalStops > 1 ? 'i' : '') + ' prematuri — posibil pseudogena sau secventa incompleta');
+
+    add('protein_length', 'Proteina sintetizata',
+      aaCount >= 50 ? 'ok' : aaCount > 0 ? 'warn' : 'fail',
+      aaCount > 0
+        ? aaCount + ' aminoacizi' + (aaCount < 50 ? ' (proteina scurta, posibil fragment)' : '')
+        : 'Nicio proteina detectata');
+  }
+
+  for (const c of checks) {
+    if (c.status === 'ok') passed++;
+    else if (c.status === 'warn') warned++;
+    else failed++;
+  }
+
+  return {
+    dna, checks, orf, gcPct, ambiguous,
+    passed, warned, failed, total: checks.length,
+    protein: orf.protein || '',
+  };
+}
+
+// GUIDE-Seq Off-target Pipeline
+// ----------------------------------------------------------
+// Cauta locuri din genom unde Cas9 ar putea taia "nedorit", chiar daca
+// secventa nu se potriveste perfect cu ghidul. Permite:
+//  - mismatch-uri (substitutii)
+//  - DNA bulge (target are o baza in plus fata de ghid)
+//  - RNA bulge (ghidul are o baza in plus fata de target)
+// PAM acceptat: NGG (canonic) si optional NAG (relaxat).
+// Scor de risc inspirat din CFD: mismatch-urile in regiunea seed (PAM-proximala)
+// au penalizare mai mare decat cele PAM-distale. Bulge-urile au penalizare fixa.
+
+function _pamType(triplet) {
+  if (!triplet || triplet.length !== 3) return null;
+  if (triplet[1] === 'G' && triplet[2] === 'G') return 'NGG';
+  if (triplet[1] === 'A' && triplet[2] === 'G') return 'NAG';
+  return null;
+}
+
+// Greutate per pozitie (0 = PAM-distal, 19 = PAM-proximal/seed)
+function _posWeight(i) { return 0.25 + 0.75 * (i / 19); }
+
+function _alignAndScore(guide, target, bulge) {
+  // guide si target au lungime 20 dupa aplicarea bulge-ului (daca exista)
+  let totalW = 0, missW = 0;
+  const mmPos = [];
+  for (let i = 0; i < 20; i++) {
+    const w = _posWeight(i);
+    totalW += w;
+    if (guide[i] !== target[i]) {
+      missW += w;
+      mmPos.push(i);
+    }
+  }
+  // Penalizare suplimentara pentru bulge (RNA bulge mai dur decat DNA)
+  let bulgePenalty = 0;
+  if (bulge) {
+    bulgePenalty = bulge.type === 'RNA' ? 0.55 : 0.40;
+    // bulge-urile in seed sunt mai daunatoare
+    if (bulge.pos >= 12) bulgePenalty *= 1.5;
+  }
+  const cleavage = Math.max(0, 1 - (missW + bulgePenalty) / totalW);
+  return { mismatches: mmPos, cleavage };
+}
+
+function _hitKey(strand, start, end) { return strand + ':' + start + ':' + end; }
+
+function findOffTargets(dna, guide20, opts) {
+  opts = opts || {};
+  const maxMM = opts.maxMismatches != null ? opts.maxMismatches : 4;
+  const allowBulges = opts.allowBulges !== false;
+  const includeNAG = opts.includeNAG !== false;
+
+  const s = cleanSeq(dna);
+  const g = cleanSeq(guide20);
+  if (g.length !== 20) return { ok: false, reason: 'ghidul trebuie sa aiba exact 20 bp' };
+  if (s.length < 23) return { ok: false, reason: 'secventa prea scurta (<23 bp)' };
+
+  const rcS = reverseComplement(s);
+  const N = s.length;
+  const hits = [];
+  const seen = new Set();
+
+  function pushHit(strand, start, end, target, pam, pamType, alignedTarget, alignedGuide, bulge, scoreInfo) {
+    const key = _hitKey(strand, start, end);
+    if (seen.has(key)) return;
+    seen.add(key);
+    // PAM-ul NAG produce taiere mai slaba — penalizam scorul cu factor
+    const pamFactor = pamType === 'NGG' ? 1.0 : 0.30;
+    const score = Math.round(scoreInfo.cleavage * pamFactor * 100);
+    const totalEdits = scoreInfo.mismatches.length + (bulge ? 1 : 0);
+    let risk;
+    if (totalEdits === 0 && pamType === 'NGG') risk = 'on-target';
+    else if (score >= 40) risk = 'high';
+    else if (score >= 15) risk = 'moderate';
+    else risk = 'low';
+    hits.push({
+      strand, start, end,
+      target, pam, pamType,
+      alignedTarget, alignedGuide,
+      mismatches: scoreInfo.mismatches.slice(),
+      bulge,
+      score, risk,
+      onTarget: totalEdits === 0 && pamType === 'NGG',
+    });
+  }
+
+  function scanStrand(seq, strand) {
+    const L = seq.length;
+    for (let i = 0; i <= L - 23; i++) {
+      const target = seq.substr(i, 20);
+      const pam = seq.substr(i + 20, 3);
+      const ptype = _pamType(pam);
+      if (!ptype) {
+        // try bulged windows too
+      } else if (includeNAG || ptype === 'NGG') {
+        const sc = _alignAndScore(g, target, null);
+        if (sc.mismatches.length <= maxMM) {
+          const realStart = strand === '+' ? i : N - i - 23;
+          const realEnd = realStart + 23;
+          pushHit(strand, realStart, realEnd, target, pam, ptype, target, g, null, sc);
+        }
+      }
+      if (!allowBulges) continue;
+
+      // DNA bulge: target are 21 nt, ghidul 20. Stergem o baza din target.
+      if (i + 24 <= L) {
+        const target21 = seq.substr(i, 21);
+        const pamDB = seq.substr(i + 21, 3);
+        const ptypeDB = _pamType(pamDB);
+        if (ptypeDB && (includeNAG || ptypeDB === 'NGG')) {
+          for (let b = 1; b < 20; b++) {
+            const aligned = target21.slice(0, b) + target21.slice(b + 1);
+            const sc = _alignAndScore(g, aligned, { type: 'DNA', pos: b });
+            if (sc.mismatches.length <= maxMM - 1) {
+              const realStart = strand === '+' ? i : N - i - 24;
+              const realEnd = realStart + 24;
+              const alignedT = target21.slice(0, b) + '-' + target21.slice(b);
+              const alignedG = g.slice(0, b) + g[b - 1] + g.slice(b);
+              pushHit(strand, realStart, realEnd, target21, pamDB, ptypeDB,
+                alignedT, alignedG.slice(0, 21), { type: 'DNA', pos: b }, sc);
+            }
+          }
+        }
+      }
+      // RNA bulge: ghidul are 20, target are 19. Stergem o baza din ghid pt aliniere.
+      if (i + 22 <= L) {
+        const target19 = seq.substr(i, 19);
+        const pamRB = seq.substr(i + 19, 3);
+        const ptypeRB = _pamType(pamRB);
+        if (ptypeRB && (includeNAG || ptypeRB === 'NGG')) {
+          for (let b = 1; b < 20; b++) {
+            const alignedG19 = g.slice(0, b) + g.slice(b + 1);
+            const sc = _alignAndScore(alignedG19, target19, { type: 'RNA', pos: b });
+            if (sc.mismatches.length <= maxMM - 1) {
+              const realStart = strand === '+' ? i : N - i - 22;
+              const realEnd = realStart + 22;
+              const alignedT = target19.slice(0, b) + '-' + target19.slice(b);
+              const alignedG = g.slice(0, 20);
+              pushHit(strand, realStart, realEnd, target19, pamRB, ptypeRB,
+                alignedT, alignedG, { type: 'RNA', pos: b }, sc);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  scanStrand(s, '+');
+  scanStrand(rcS, '-');
+
+  // Sortare: on-target inainte, apoi dupa scor descrescator
+  hits.sort((a, b) => {
+    if (a.onTarget !== b.onTarget) return a.onTarget ? -1 : 1;
+    return b.score - a.score;
+  });
+
+  const stats = {
+    total: hits.length,
+    onTarget: hits.filter(h => h.onTarget).length,
+    high: hits.filter(h => !h.onTarget && h.risk === 'high').length,
+    moderate: hits.filter(h => h.risk === 'moderate').length,
+    low: hits.filter(h => h.risk === 'low').length,
+  };
+
+  return { ok: true, hits, stats, guide: g, params: { maxMM, allowBulges, includeNAG } };
+}
+
+// ============================================================
+// ANDES — Adaptive Nonsupervised Detection by FDA
+// ============================================================
+// Detecteaza regiuni genomice anormale FARA o lista de editari prestabilita.
+// Inspiratie: Functional Data Analysis. Calculam mai multe semnale
+// (GC content, entropie Shannon, GC/AT skew, CpG O/E) prin ferestre glisante,
+// le netezim, apoi luam derivata 1 ("viteza") si derivata 2 ("acceleratia").
+// Z-scoram fiecare derivata si combinam => scor compozit de anomalie.
+// Ferestrele consecutive cu scor compozit > prag => anomalie detectata.
+// Clasificare automata dupa care semnal contribuie cel mai mult.
+
+function _shannonEntropy(counts, win) {
+  let H = 0;
+  for (const k of 'ATGC') {
+    const p = counts[k] / win;
+    if (p > 0) H -= p * Math.log2(p);
+  }
+  return H;
+}
+
+function _smoothArr(arr) {
+  const n = arr.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = arr[Math.max(0, i - 1)];
+    const b = arr[i];
+    const c = arr[Math.min(n - 1, i + 1)];
+    out[i] = (a + 2 * b + c) / 4;
+  }
+  return out;
+}
+
+function _deriv1(arr, h) {
+  const n = arr.length;
+  const v = new Array(n).fill(0);
+  for (let i = 1; i < n - 1; i++) v[i] = (arr[i + 1] - arr[i - 1]) / (2 * h);
+  if (n > 1) { v[0] = v[1]; v[n - 1] = v[n - 2]; }
+  return v;
+}
+
+function _deriv2(arr, h) {
+  const n = arr.length;
+  const a = new Array(n).fill(0);
+  for (let i = 1; i < n - 1; i++) a[i] = (arr[i + 1] - 2 * arr[i] + arr[i - 1]) / (h * h);
+  if (n > 1) { a[0] = a[1]; a[n - 1] = a[n - 2]; }
+  return a;
+}
+
+// Robust z-score folosind median si MAD (Median Absolute Deviation).
+// Mai putin afectat de outlier-uri decat mean/std => detecteaza anomalii extinse,
+// nu le auto-mascheaza prin inflatarea deviatiei standard.
+// MAD primeste un floor in functie de range pentru a evita explozii numerice
+// cand seria are multe valori identice (ex: CpG O/E = 0 in ferestre fara C/G).
+function _zscoreAbs(arr) {
+  const abs = arr.map(Math.abs);
+  const sorted = abs.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const dev = abs.map(x => Math.abs(x - median)).sort((a, b) => a - b);
+  const madRaw = dev[Math.floor(dev.length / 2)];
+  // floor: cel putin 1% din range, dar nu sub 1e-3 — previne mad ≈ 0
+  const range = (sorted[sorted.length - 1] - sorted[0]) || 0;
+  const mad = Math.max(madRaw, range * 0.01, 1e-3);
+  // 1.4826 — conversie MAD -> stdev pentru distributie normala
+  // Clip la +/- 12 ca sa nu domine scorul compozit cu un singur outlier
+  return abs.map(x => Math.max(-12, Math.min(12, (x - median) / (1.4826 * mad))));
+}
+
+function andesAnalyze(dna, opts) {
+  opts = opts || {};
+  const s = cleanSeq(dna);
+  const N = s.length;
+  if (N < 60) return { ok: false, reason: 'secventa prea scurta pentru FDA (<60 bp)' };
+
+  const win = opts.window || Math.max(25, Math.min(80, Math.floor(N / 25)));
+  const step = opts.step || Math.max(1, Math.floor(win / 6));
+  const thresh = opts.threshold != null ? opts.threshold : 2.5;
+
+  // ---- 1. Extract multi-signal windowed series ----
+  const centers = [], rawGC = [], rawEnt = [], rawGCSkew = [], rawATSkew = [], rawCpG = [];
+  for (let i = 0; i + win <= N; i += step) {
+    const w = s.substr(i, win);
+    centers.push(i + win / 2);
+    const cnt = { A: 0, T: 0, G: 0, C: 0 };
+    for (const b of w) cnt[b]++;
+    rawGC.push((cnt.G + cnt.C) / win);
+    rawEnt.push(_shannonEntropy(cnt, win));
+    const gcSum = cnt.G + cnt.C, atSum = cnt.A + cnt.T;
+    rawGCSkew.push(gcSum > 0 ? (cnt.G - cnt.C) / gcSum : 0);
+    rawATSkew.push(atSum > 0 ? (cnt.A - cnt.T) / atSum : 0);
+    let cpg = 0;
+    for (let j = 0; j < w.length - 1; j++) if (w[j] === 'C' && w[j + 1] === 'G') cpg++;
+    const cgProd = cnt.C * cnt.G;
+    rawCpG.push(cgProd > 0 ? (cpg * (win - 1)) / cgProd : 0);
+  }
+  if (centers.length < 5) return { ok: false, reason: 'prea putine ferestre pentru FDA (mareste secventa)' };
+
+  // ---- 2. Smooth (B-spline-like): apply 3-pt MA twice ----
+  const sigs = {
+    gc:     { name: 'GC content',  color: '#00e5ff', values: _smoothArr(_smoothArr(rawGC)) },
+    ent:    { name: 'Entropy',     color: '#ff3df5', values: _smoothArr(_smoothArr(rawEnt)) },
+    gcSkew: { name: 'GC skew',     color: '#ffcc3a', values: _smoothArr(_smoothArr(rawGCSkew)) },
+    atSkew: { name: 'AT skew',     color: '#ff9333', values: _smoothArr(_smoothArr(rawATSkew)) },
+    cpg:    { name: 'CpG O/E',     color: '#00ff88', values: _smoothArr(_smoothArr(rawCpG)) },
+  };
+
+  // ---- 3. FDA: velocity + acceleration + z-score ----
+  const tracks = {};
+  for (const [key, sig] of Object.entries(sigs)) {
+    const vel = _deriv1(sig.values, step);
+    const acc = _deriv2(sig.values, step);
+    tracks[key] = {
+      name: sig.name,
+      color: sig.color,
+      values: sig.values,
+      velocity: vel,
+      acceleration: acc,
+      velZ: _zscoreAbs(vel),
+      accZ: _zscoreAbs(acc),
+    };
+  }
+
+  // ---- 4. Composite anomaly score per window ----
+  const nWin = centers.length;
+  const composite = new Array(nWin).fill(0);
+  const keys = Object.keys(tracks);
+  for (let i = 0; i < nWin; i++) {
+    let sum = 0;
+    for (const k of keys) {
+      sum += Math.max(0, tracks[k].velZ[i]) + Math.max(0, tracks[k].accZ[i]);
+    }
+    composite[i] = sum / (keys.length * 2);
+  }
+
+  // ---- 5. Detect anomaly regions (contiguous windows above threshold) ----
+  const anomalies = [];
+  let i = 0;
+  while (i < nWin) {
+    if (composite[i] >= thresh) {
+      let j = i, peak = i, peakVal = composite[i];
+      while (j < nWin && composite[j] >= thresh) {
+        if (composite[j] > peakVal) { peak = j; peakVal = composite[j]; }
+        j++;
+      }
+      const contrib = {};
+      for (const k of keys) {
+        contrib[k] = Math.max(0, tracks[k].velZ[peak]) + Math.max(0, tracks[k].accZ[peak]);
+      }
+      const top = Object.entries(contrib).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      const startBp = Math.max(0, Math.round(centers[i] - win / 2));
+      const endBp = Math.min(N, Math.round(centers[j - 1] + win / 2));
+      const peakBp = Math.round(centers[peak]);
+      // Classify type
+      const topKeys = top.map(t => t[0]);
+      let type;
+      if (topKeys.includes('cpg')) type = 'CpG anomaly';
+      else if (topKeys.includes('gc') && (topKeys.includes('gcSkew') || topKeys.includes('atSkew'))) type = 'compositional shift';
+      else if (topKeys.includes('ent')) type = 'complexity change';
+      else if (topKeys.includes('gcSkew') || topKeys.includes('atSkew')) type = 'strand asymmetry';
+      else type = 'mixed';
+      const severity = peakVal >= 4 ? 'high' : peakVal >= 3 ? 'moderate' : 'low';
+      anomalies.push({
+        startWin: i, endWin: j - 1, peakWin: peak,
+        startBp, endBp, peakBp,
+        score: peakVal, type, severity, topSignals: top,
+      });
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  anomalies.sort((a, b) => b.score - a.score);
+
+  return {
+    ok: true,
+    params: { window: win, step, threshold: thresh, length: N, nWin },
+    centers, composite, tracks, anomalies,
+  };
+}
+
 window.GeneticaBio = {
   cleanSeq, complement, reverseComplement,
   transcribe, translate, findORFAndTranslate,
   cutWithEnzyme, pointMutation, indel,
   classifyMutation, crisprCut, pcr, gelBands,
+  verifySeq, findOffTargets, andesAnalyze,
 };
 
 })();

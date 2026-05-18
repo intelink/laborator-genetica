@@ -14,6 +14,7 @@ StandardOutput=append:/home/eae/Documents/laborator_genetica/server.log
 StandardError=append:/home/eae/Documents/laborator_genetica/server.log
 Environment=HOME=/home/eae
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=GENETICA_AI_MODEL=opus
 
 [Install]
 WantedBy=multi-user.target

@@ -25,7 +25,7 @@
     <!-- GLOBAL SEARCH -->
     <div class="search-wrap">
       <div class="search-ic">🔍</div>
-      <span class="search-src-badge">NCBI</span>
+      <button class="search-src-badge" id="searchSrc" data-src="ncbi" title="click pentru a comuta sursa">NCBI</button>
       <input type="text" id="globalSearch" class="holo-input" autocomplete="off"
              placeholder="Cauta o gena (BRCA1, p53, HBB, insulin mouse)..." spellcheck="false">
       <div class="search-organ">
@@ -205,6 +205,14 @@
             <div class="tool-ic">✂</div>
             <div class="tool-body"><div class="tool-t">CRISPR / Cas9</div><div class="tool-d">Editare tintita + PAM</div></div>
           </button>
+          <button class="tool-btn tool-offtarget" data-tool="offtarget">
+            <div class="tool-ic">⚠</div>
+            <div class="tool-body"><div class="tool-t">CRISPR Off-target (GUIDE-seq)</div><div class="tool-d">Detecteaza taieri nedorite + bulge-uri</div></div>
+          </button>
+          <button class="tool-btn tool-andes" data-tool="andes">
+            <div class="tool-ic">∿</div>
+            <div class="tool-body"><div class="tool-t">ANDES (FDA, nesupervizat)</div><div class="tool-d">Viteza + acceleratie → anomalii fara ipoteza</div></div>
+          </button>
           <button class="tool-btn" data-tool="restriction">
             <div class="tool-ic">⎯⎯|</div>
             <div class="tool-body"><div class="tool-t">Enzima restrictie</div><div class="tool-d">Taie la site-ul ei (EcoRI...)</div></div>
@@ -220,6 +228,10 @@
           <button class="tool-btn" data-tool="complement">
             <div class="tool-ic">⟳</div>
             <div class="tool-body"><div class="tool-t">Complement invers</div><div class="tool-d">Firul antisens 5'→3'</div></div>
+          </button>
+          <button class="tool-btn" data-tool="verify">
+            <div class="tool-ic">✔</div>
+            <div class="tool-body"><div class="tool-t">SeqVerify</div><div class="tool-d">Valideaza integritatea secventei</div></div>
           </button>
           <button class="tool-btn" id="btnFeatures">
             <div class="tool-ic">🗺</div>
@@ -310,12 +322,51 @@
         <div id="mutSummary"></div>
       </div>
 
+      <div class="card holo" id="seqVerifyCard" style="display:none">
+        <h2>✔ SeqVerify <span class="accent-slot" id="seqVerifySlotTag">SLOT A</span> <span class="bar"></span></h2>
+        <div id="seqVerifyContent"></div>
+      </div>
+
       <div class="card holo" id="featCard" style="display:none">
         <h2>🗺 Caracteristici genomice <span class="accent-slot" id="featSlotTag">SLOT A</span> <span class="bar"></span></h2>
         <div id="featStatus" class="hint" style="margin-bottom:8px"></div>
         <div id="featMap" class="feat-map"></div>
         <div id="featList" class="feat-list"></div>
         <div class="hint" style="margin-top:8px">Click pe o caracteristica → highlight in vizualizatorul ADN de sus</div>
+      </div>
+
+      <div class="card holo" id="andesCard" style="display:none">
+        <h2>∿ ANDES — FDA anomaly scan <span class="accent-slot" id="andesSlotTag">SLOT A</span> <span class="bar"></span></h2>
+        <div id="andesSummary" class="andes-summary"></div>
+        <div class="andes-filters">
+          <button class="andes-filter active" data-filter="all">Toate</button>
+          <button class="andes-filter andes-f-hi" data-filter="high">HIGH</button>
+          <button class="andes-filter andes-f-md" data-filter="moderate">MED</button>
+          <button class="andes-filter andes-f-lo" data-filter="low">LOW</button>
+        </div>
+        <div class="andes-chart-wrap" id="andesChartWrap"></div>
+        <div class="andes-legend" id="andesLegend"></div>
+        <div class="andes-list" id="andesList"></div>
+        <div class="hint" style="margin-top:8px">
+          <b>FDA (Functional Data Analysis):</b> calculam <b>viteza</b> (derivata 1) si
+          <b>acceleratia</b> (derivata 2) a semnalelor genomice (GC, entropie, GC/AT skew, CpG O/E).
+          Anomaliile = zone unde semnalul se abate brusc de la fundalul natural. Click pe o
+          anomalie → highlight in vizualizatorul ADN.
+        </div>
+      </div>
+
+      <div class="card holo" id="offtargetCard" style="display:none">
+        <h2>⚠ GUIDE-seq Off-target Pipeline <span class="accent-slot" id="offtargetSlotTag">SLOT A</span> <span class="bar"></span></h2>
+        <div id="offtargetSummary" class="ot-summary"></div>
+        <div class="ot-filters">
+          <button class="ot-filter active" data-filter="all">Toate</button>
+          <button class="ot-filter ot-f-ot" data-filter="ontarget">on-target</button>
+          <button class="ot-filter ot-f-hi" data-filter="high">HIGH</button>
+          <button class="ot-filter ot-f-md" data-filter="moderate">MED</button>
+          <button class="ot-filter ot-f-lo" data-filter="low">LOW</button>
+        </div>
+        <div class="ot-list" id="offtargetList"></div>
+        <div class="hint" style="margin-top:8px">Aliniere: <span class="ot-mm-dot"></span> mismatch · <span class="ot-bulge-dot"></span> bulge · <span class="ot-pam-dot"></span> PAM. Click pe un site → highlight in vizualizatorul ADN.</div>
       </div>
 
       <div class="card holo" id="compareCard" style="display:none">

@@ -81,6 +81,9 @@ $("btnReset").addEventListener("click", ()=>{
   $("gelCard").style.display = 'none';
   $("featCard").style.display = 'none';
   $("compareCard").style.display = 'none';
+  $("seqVerifyCard").style.display = 'none';
+  $("offtargetCard").style.display = 'none';
+  $("andesCard").style.display = 'none';
   $("mutSummary").innerHTML = '';
 });
 
@@ -95,6 +98,9 @@ function setSequence(seq, label, kind, acc){
   if ($("seqInput")) $("seqInput").value = slot.seq;
   $("gelCard").style.display = 'none';
   $("featCard").style.display = 'none';
+  $("seqVerifyCard").style.display = 'none';
+  $("offtargetCard").style.display = 'none';
+  $("andesCard").style.display = 'none';
   $("mutSummary").innerHTML = '';
   updateSlotChips();
   renderAll();
@@ -145,10 +151,13 @@ document.querySelectorAll('[data-tool]').forEach(btn=>{
     else if (t === 'translate') { doTranslate(); }
     else if (t === 'mutate') { openMutateModal(); }
     else if (t === 'crispr') { openCrisprModal(); }
+    else if (t === 'offtarget') { openOffTargetModal(); }
+    else if (t === 'andes') { openAndesModal(); }
     else if (t === 'restriction') { openRestrictionModal(); }
     else if (t === 'pcr') { openPcrModal(); }
     else if (t === 'gel') { openGelModal(); }
     else if (t === 'complement') { doComplement(); }
+    else if (t === 'verify') { doVerify(); }
   });
 });
 
@@ -182,6 +191,47 @@ function doComplement(){
   if (!state.seq){ logEvt('nimic de complementat', 'err'); return; }
   const rc = BIO.reverseComplement(state.seq);
   setSequence(rc, 'complement invers', 'info');
+}
+
+// ---------- SeqVerify ----------
+function doVerify(){
+  const r = BIO.verifySeq(state.seq);
+  $("seqVerifyCard").style.display = 'block';
+  $("seqVerifySlotTag").textContent = 'SLOT ' + state.active;
+
+  const headerCls = r.failed > 0 ? 'sv-fail' : r.warned > 0 ? 'sv-warn' : 'sv-pass';
+  const statusTxt = r.failed === 0 && r.warned === 0
+    ? 'Secventa valida'
+    : (r.failed > 0 ? r.failed + (r.failed === 1 ? ' eroare' : ' erori') : '')
+      + (r.failed > 0 && r.warned > 0 ? ', ' : '')
+      + (r.warned > 0 ? r.warned + (r.warned === 1 ? ' avertisment' : ' avertismente') : '');
+
+  const ICON = { ok: '✓', warn: '⚠', fail: '✗' };
+  const CLS  = { ok: 'sv-ok', warn: 'sv-warn', fail: 'sv-err' };
+
+  let html = `
+    <div class="sv-header ${headerCls}">
+      <span class="sv-score">${r.passed}/${r.total}</span>
+      <span class="sv-status">${esc(statusTxt)}</span>
+      <span class="sv-meta">${r.dna.length} bp · ${r.gcPct}% GC</span>
+    </div>
+    <div class="sv-checks">`;
+
+  for (const c of r.checks) {
+    html += `<div class="sv-check ${CLS[c.status]}">
+      <span class="sv-icon">${ICON[c.status]}</span>
+      <span class="sv-label">${esc(c.label)}</span>
+      <span class="sv-detail">${esc(c.detail)}</span>
+    </div>`;
+  }
+  html += '</div>';
+
+  $("seqVerifyContent").innerHTML = html;
+  $("seqVerifyCard").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const evtKind = r.failed > 0 ? 'err' : r.warned > 0 ? 'info' : 'ok';
+  logEvt('SeqVerify Slot ' + state.active + ': ' + r.passed + '/' + r.total + ' OK'
+    + (r.failed > 0 ? ', ' + r.failed + ' erori' : '')
+    + (r.warned > 0 ? ', ' + r.warned + ' avertismente' : ''), evtKind);
 }
 
 // ---------- mutate ----------
@@ -259,6 +309,406 @@ function applyCrispr(){
   closeModal(); renderAll();
   logEvt('CRISPR: ghid la poz '+hit.start+' (fir '+hit.strand+'), PAM la '+hit.pam, 'crispr');
 }
+
+// ---------- CRISPR Off-target (GUIDE-seq pipeline) ----------
+const offState = { result: null, filter: 'all' };
+
+function openOffTargetModal(){
+  const lastGuide = ($("crisprGuide") && $("crisprGuide").value) || 'TAGCCTGAGATTGCCTCAAC';
+  openModal(`
+    <h3>⚠ GUIDE-seq Off-target Pipeline</h3>
+    <div class="hint" style="margin-bottom:10px">
+      Simuleaza analiza GUIDE-Seq: cauta in secventa <b>activa</b> toate locurile unde Cas9
+      ar putea taia cu acest ghid, permitand <b>mismatch-uri</b> si <b>bulge-uri</b>.
+      Rezultatul = lista prioritizata dupa risc de taiere off-target.
+    </div>
+    <label>ghid ARN (20 bp, fara PAM)</label>
+    <input type="text" id="otGuide" value="${esc(lastGuide)}" style="letter-spacing:.05em">
+    <label style="margin-top:10px">mismatch-uri permise (toleranta)</label>
+    <select id="otMaxMM">
+      <option value="2">2 — strict</option>
+      <option value="3">3</option>
+      <option value="4" selected>4 — recomandat</option>
+      <option value="5">5</option>
+      <option value="6">6 — relaxat (multe semnale)</option>
+    </select>
+    <div class="ot-opts">
+      <label class="ot-check"><input type="checkbox" id="otBulges" checked> permite bulge-uri (DNA + RNA, max 1)</label>
+      <label class="ot-check"><input type="checkbox" id="otNAG" checked> include PAM NAG (cleavage slab)</label>
+    </div>
+    <div class="hint" style="margin-top:8px">
+      Scor 0–100: greutate mai mare in regiunea <b>seed</b> (poz 12–20, langa PAM). Bulge-urile costa
+      ~50% mismatch suplimentar. NAG = factor 0.30 pe scor.
+    </div>
+    <div class="actions">
+      <button class="btn-ghost" onclick="closeModal()">anuleaza</button>
+      <button class="btn" onclick="runOffTarget()">⚡ ruleaza pipeline</button>
+    </div>`);
+}
+
+function runOffTarget(){
+  const guide = ($("otGuide").value || '').trim();
+  const maxMM = parseInt($("otMaxMM").value, 10);
+  const allowBulges = $("otBulges").checked;
+  const includeNAG = $("otNAG").checked;
+  const r = BIO.findOffTargets(state.seq, guide, { maxMismatches: maxMM, allowBulges, includeNAG });
+  closeModal();
+  if (!r.ok){ logEvt('Off-target: '+r.reason, 'err'); return; }
+  offState.result = r;
+  offState.filter = 'all';
+  renderOffTarget();
+  const ot = r.stats.onTarget;
+  const off = r.stats.total - ot;
+  logEvt('GUIDE-seq pipeline: '+r.stats.total+' site-uri ('+ot+' on-target, '+off+' off-target — '+r.stats.high+' HIGH, '+r.stats.moderate+' MED, '+r.stats.low+' LOW)', off > 0 ? 'crispr' : 'ok');
+  $("offtargetCard").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderOffTarget(){
+  const r = offState.result;
+  if (!r){ $("offtargetCard").style.display = 'none'; return; }
+  $("offtargetCard").style.display = 'block';
+  $("offtargetSlotTag").textContent = 'SLOT ' + state.active;
+
+  const st = r.stats;
+  const offCount = st.total - st.onTarget;
+  $("offtargetSummary").innerHTML = `
+    <div class="ot-stat-row">
+      <div class="ot-stat"><div class="lab">total site-uri</div><div class="val">${st.total}</div></div>
+      <div class="ot-stat ot-on"><div class="lab">on-target</div><div class="val">${st.onTarget}</div></div>
+      <div class="ot-stat ot-off"><div class="lab">off-target</div><div class="val">${offCount}</div></div>
+      <div class="ot-stat ot-hi"><div class="lab">HIGH</div><div class="val">${st.high}</div></div>
+      <div class="ot-stat ot-md"><div class="lab">MED</div><div class="val">${st.moderate}</div></div>
+      <div class="ot-stat ot-lo"><div class="lab">LOW</div><div class="val">${st.low}</div></div>
+    </div>
+    <div class="ot-guide-row">
+      ghid: <span class="ot-guide-seq">${esc(r.guide)}</span>
+      <span class="ot-params">· max ${r.params.maxMM} mm · bulges ${r.params.allowBulges?'on':'off'} · NAG ${r.params.includeNAG?'on':'off'}</span>
+    </div>`;
+
+  document.querySelectorAll('.ot-filter').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === offState.filter);
+  });
+
+  const listEl = $("offtargetList");
+  let filtered = r.hits;
+  if (offState.filter === 'ontarget') filtered = filtered.filter(h => h.onTarget);
+  else if (offState.filter === 'high') filtered = filtered.filter(h => !h.onTarget && h.risk === 'high');
+  else if (offState.filter === 'moderate') filtered = filtered.filter(h => h.risk === 'moderate');
+  else if (offState.filter === 'low') filtered = filtered.filter(h => h.risk === 'low');
+
+  if (!filtered.length){
+    listEl.innerHTML = '<div class="ot-empty">Niciun site pentru filtrul curent.</div>';
+    return;
+  }
+
+  let html = '';
+  filtered.forEach((h, idx) => {
+    const rank = r.hits.indexOf(h) + 1;
+    const riskCls = h.onTarget ? 'ot-r-on' : ('ot-r-' + h.risk);
+    const riskLbl = h.onTarget ? 'ON-TARGET' : h.risk.toUpperCase();
+    const mmSet = new Set(h.mismatches);
+    // randam aliniat target cu mismatch evidentiat + PAM
+    let targetHtml = '';
+    for (let k = 0; k < h.alignedTarget.length; k++){
+      const ch = h.alignedTarget[k];
+      let cls = 'ot-b';
+      if (ch === '-') cls += ' ot-bulge';
+      else if (mmSet.has(k)) cls += ' ot-mm';
+      targetHtml += `<span class="${cls}">${ch}</span>`;
+    }
+    let guideHtml = '';
+    for (let k = 0; k < h.alignedGuide.length; k++){
+      const ch = h.alignedGuide[k];
+      let cls = 'ot-b';
+      if (mmSet.has(k)) cls += ' ot-mm';
+      guideHtml += `<span class="${cls}">${ch}</span>`;
+    }
+    let pamHtml = '';
+    for (const c of h.pam) pamHtml += `<span class="ot-b ot-pam">${c}</span>`;
+
+    const bulgeTxt = h.bulge ? `<span class="ot-tag ot-tag-bulge">${h.bulge.type}-bulge @${h.bulge.pos}</span>` : '';
+    const mmTxt = `<span class="ot-tag">${h.mismatches.length} mm</span>`;
+    const pamTxt = `<span class="ot-tag ot-tag-pam">PAM ${h.pamType}</span>`;
+    const strandTxt = `<span class="ot-tag ot-tag-strand">fir ${h.strand}</span>`;
+
+    html += `
+      <div class="ot-item ${riskCls}" data-idx="${rank-1}">
+        <div class="ot-rank">#${rank}</div>
+        <div class="ot-body">
+          <div class="ot-row1">
+            <span class="ot-risk-badge ${riskCls}">${riskLbl}</span>
+            <span class="ot-pos">poz ${h.start}–${h.end}</span>
+            ${strandTxt}${pamTxt}${mmTxt}${bulgeTxt}
+            <span class="ot-score">score <b>${h.score}</b>/100</span>
+          </div>
+          <div class="ot-align">
+            <div class="ot-align-row"><span class="ot-tag-l">target</span><span class="ot-seq">${targetHtml}</span><span class="ot-seq ot-pam-seq">${pamHtml}</span></div>
+            <div class="ot-align-row"><span class="ot-tag-l">guide</span><span class="ot-seq">${guideHtml}</span><span class="ot-seq ot-pam-seq ot-pam-ph">NGG</span></div>
+          </div>
+        </div>
+      </div>`;
+  });
+  listEl.innerHTML = html;
+
+  listEl.querySelectorAll('.ot-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const hit = r.hits[idx];
+      jumpToOffTarget(hit);
+    });
+  });
+}
+
+function jumpToOffTarget(hit){
+  // start/end sunt deja in coordonate +strand (am tradus -strand in scanStrand)
+  const targetLen = hit.end - hit.start - 3; // exclude PAM (3 bp)
+  state.highlights = [
+    { start: hit.start, len: targetLen, cls: hit.onTarget ? 'target' : 'mut' },
+    { start: hit.end - 3, len: 3, cls: 'pam' },
+  ];
+  renderDNA();
+  $("dnaView").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // scroll in interiorul viewer-ului pana la pozitia hit-ului
+  const dv = $("dnaView");
+  const PER_LINE = 60;
+  const lineIdx = Math.floor(hit.start / PER_LINE);
+  const approxLineHeight = 30;
+  dv.scrollTop = Math.max(0, lineIdx * approxLineHeight - 40);
+  const riskLbl = hit.onTarget ? 'on-target' : hit.risk;
+  logEvt('Off-target #'+(offState.result.hits.indexOf(hit)+1)+' ('+riskLbl+') la poz '+hit.start+' fir '+hit.strand, 'crispr');
+}
+
+document.addEventListener('click', (e) => {
+  const f = e.target.closest('.ot-filter');
+  if (f){
+    offState.filter = f.dataset.filter;
+    renderOffTarget();
+  }
+});
+
+// ---------- ANDES (FDA anomaly scan) ----------
+const andesState = { result: null, filter: 'all' };
+
+function openAndesModal(){
+  const seqLen = state.seq.length;
+  const defWin = Math.max(25, Math.min(80, Math.floor(seqLen / 25)));
+  openModal(`
+    <h3>∿ ANDES — Anomaly Scan</h3>
+    <div class="hint" style="margin-bottom:10px">
+      Detectie <b>nesupervizata</b> a regiunilor anormale prin <b>Functional Data Analysis</b>.
+      Nu trebuie sa stii dinainte ce sa cauti — algoritmul invata fundalul si scoate ce iese
+      din tipar (insertii, artefacte, regiuni sub selectie).
+    </div>
+    <label>fereastra (bp)</label>
+    <input type="number" id="andesWin" value="${defWin}" min="15" max="200" step="5">
+    <label style="margin-top:10px">pas (bp)</label>
+    <input type="number" id="andesStep" value="${Math.max(1, Math.floor(defWin/6))}" min="1" max="50">
+    <label style="margin-top:10px">prag z-score anomalie</label>
+    <select id="andesThresh">
+      <option value="2">2.0 — sensibil (multe anomalii)</option>
+      <option value="2.5" selected>2.5 — recomandat</option>
+      <option value="3">3.0 — conservator</option>
+      <option value="4">4.0 — doar varfuri majore</option>
+    </select>
+    <div class="hint" style="margin-top:8px">
+      Semnale analizate: GC content, entropie Shannon, GC/AT skew, CpG O/E.
+      Pentru fiecare: viteza + acceleratie + z-score robust (MAD).
+    </div>
+    <div class="actions">
+      <button class="btn-ghost" onclick="closeModal()">anuleaza</button>
+      <button class="btn" onclick="runAndes()">∿ scaneaza</button>
+    </div>`);
+}
+
+function runAndes(){
+  const win = parseInt($("andesWin").value, 10);
+  const step = parseInt($("andesStep").value, 10);
+  const threshold = parseFloat($("andesThresh").value);
+  const r = BIO.andesAnalyze(state.seq, { window: win, step, threshold });
+  closeModal();
+  if (!r.ok){ logEvt('ANDES: '+r.reason, 'err'); return; }
+  andesState.result = r;
+  andesState.filter = 'all';
+  renderAndes();
+  logEvt('ANDES: '+r.anomalies.length+' anomalii (win='+r.params.window+'bp, step='+r.params.step+'bp, prag='+r.params.threshold+')', r.anomalies.length ? 'crispr' : 'ok');
+  $("andesCard").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderAndes(){
+  const r = andesState.result;
+  if (!r){ $("andesCard").style.display = 'none'; return; }
+  $("andesCard").style.display = 'block';
+  $("andesSlotTag").textContent = 'SLOT ' + state.active;
+
+  const hi = r.anomalies.filter(a => a.severity === 'high').length;
+  const md = r.anomalies.filter(a => a.severity === 'moderate').length;
+  const lo = r.anomalies.filter(a => a.severity === 'low').length;
+  const covered = r.anomalies.reduce((sum, a) => sum + (a.endBp - a.startBp), 0);
+  const pct = r.params.length > 0 ? Math.round(covered / r.params.length * 100) : 0;
+
+  $("andesSummary").innerHTML = `
+    <div class="andes-stat-row">
+      <div class="andes-stat"><div class="lab">secventa</div><div class="val">${r.params.length} bp</div></div>
+      <div class="andes-stat"><div class="lab">ferestre</div><div class="val">${r.params.nWin}</div></div>
+      <div class="andes-stat"><div class="lab">total anomalii</div><div class="val">${r.anomalies.length}</div></div>
+      <div class="andes-stat andes-hi"><div class="lab">HIGH</div><div class="val">${hi}</div></div>
+      <div class="andes-stat andes-md"><div class="lab">MED</div><div class="val">${md}</div></div>
+      <div class="andes-stat andes-lo"><div class="lab">LOW</div><div class="val">${lo}</div></div>
+      <div class="andes-stat andes-cov"><div class="lab">acoperire</div><div class="val">${pct}%</div></div>
+    </div>`;
+
+  document.querySelectorAll('.andes-filter').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === andesState.filter);
+  });
+
+  // SVG chart
+  $("andesChartWrap").innerHTML = renderAndesChart(r);
+  $("andesLegend").innerHTML = renderAndesLegend(r);
+
+  // Ranked list
+  let filtered = r.anomalies;
+  if (andesState.filter === 'high') filtered = filtered.filter(a => a.severity === 'high');
+  else if (andesState.filter === 'moderate') filtered = filtered.filter(a => a.severity === 'moderate');
+  else if (andesState.filter === 'low') filtered = filtered.filter(a => a.severity === 'low');
+
+  const listEl = $("andesList");
+  if (!filtered.length){
+    listEl.innerHTML = '<div class="andes-empty">Niciun varf pentru filtrul curent.</div>';
+    return;
+  }
+  let html = '';
+  filtered.forEach(a => {
+    const rank = r.anomalies.indexOf(a) + 1;
+    const sevCls = 'andes-sv-' + a.severity;
+    const sigsHtml = a.topSignals.map(t => {
+      const tr = r.tracks[t[0]];
+      return `<span class="andes-sig-chip" style="color:${tr.color};border-color:${tr.color}66">${tr.name} <b>z=${t[1].toFixed(1)}</b></span>`;
+    }).join('');
+    html += `
+      <div class="andes-item ${sevCls}" data-idx="${rank-1}">
+        <div class="andes-rank">#${rank}</div>
+        <div class="andes-body">
+          <div class="andes-row1">
+            <span class="andes-sev-badge ${sevCls}">${a.severity.toUpperCase()}</span>
+            <span class="andes-type">${esc(a.type)}</span>
+            <span class="andes-pos">poz ${a.startBp}–${a.endBp} <span class="dim">(peak @${a.peakBp})</span></span>
+            <span class="andes-score">score <b>${a.score.toFixed(2)}</b></span>
+          </div>
+          <div class="andes-sigs">${sigsHtml}</div>
+        </div>
+      </div>`;
+  });
+  listEl.innerHTML = html;
+  listEl.querySelectorAll('.andes-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      jumpToAndes(r.anomalies[idx]);
+    });
+  });
+}
+
+function renderAndesChart(r){
+  const W = 740, H = 200;
+  const m = { t: 14, r: 14, b: 24, l: 38 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const N = r.params.length;
+  const xScale = bp => m.l + (bp / N) * iw;
+  // Composite y range
+  const maxC = Math.max(r.params.threshold * 1.6, ...r.composite, 0.5);
+  const yScale = v => m.t + (1 - v / maxC) * ih;
+
+  // Anomaly bands
+  let bands = '';
+  for (const a of r.anomalies){
+    const x1 = xScale(a.startBp), x2 = xScale(a.endBp);
+    const sevColor = a.severity === 'high' ? 'rgba(255,43,90,0.18)' :
+                     a.severity === 'moderate' ? 'rgba(255,204,58,0.16)' :
+                     'rgba(0,229,255,0.12)';
+    bands += `<rect x="${x1}" y="${m.t}" width="${Math.max(2, x2-x1)}" height="${ih}" fill="${sevColor}"/>`;
+  }
+  // Composite path
+  let pathC = '';
+  for (let i = 0; i < r.centers.length; i++){
+    const x = xScale(r.centers[i]);
+    const y = yScale(r.composite[i]);
+    pathC += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+  }
+  // Threshold line
+  const yT = yScale(r.params.threshold);
+  // Axis ticks
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const bp = Math.round(N * f);
+    return `<text x="${xScale(bp)}" y="${H - 6}" class="andes-ax-lbl" text-anchor="middle">${bp}</text>`;
+  }).join('');
+  const yTicks = [];
+  for (let v = 0; v <= maxC; v += Math.max(1, Math.round(maxC / 4))){
+    yTicks.push(`<line x1="${m.l}" x2="${W-m.r}" y1="${yScale(v)}" y2="${yScale(v)}" class="andes-grid"/>`);
+    yTicks.push(`<text x="${m.l-6}" y="${yScale(v)+3}" class="andes-ax-lbl" text-anchor="end">${v.toFixed(0)}</text>`);
+  }
+
+  return `
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="andes-svg">
+      ${yTicks.join('')}
+      ${bands}
+      <line x1="${m.l}" x2="${W-m.r}" y1="${yT}" y2="${yT}" class="andes-thresh"/>
+      <text x="${W-m.r}" y="${yT-4}" class="andes-ax-lbl" text-anchor="end" fill="#ff9333">prag z=${r.params.threshold}</text>
+      <path d="${pathC}" class="andes-composite"/>
+      <text x="${m.l}" y="${m.t-2}" class="andes-ax-lbl" fill="#8cab9d">scor compozit (|viteza|+|acceleratie|, z-MAD)</text>
+      ${xTicks}
+    </svg>`;
+}
+
+function renderAndesLegend(r){
+  // Mini track strips: 5 small charts, one per signal
+  const tracks = r.tracks;
+  const keys = Object.keys(tracks);
+  const W = 740, stripH = 38;
+  const m = { l: 38, r: 14, t: 4, b: 8 };
+  const iw = W - m.l - m.r;
+  const N = r.params.length;
+  const xScale = bp => m.l + (bp / N) * iw;
+  let strips = '';
+  for (const k of keys){
+    const tr = tracks[k];
+    const vals = tr.values;
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const span = (max - min) || 1;
+    const yScale = v => m.t + (1 - (v - min) / span) * (stripH - m.t - m.b);
+    let path = '';
+    for (let i = 0; i < r.centers.length; i++){
+      const x = xScale(r.centers[i]);
+      const y = yScale(vals[i]);
+      path += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+    }
+    strips += `
+      <svg viewBox="0 0 ${W} ${stripH}" preserveAspectRatio="xMidYMid meet" class="andes-strip">
+        <text x="0" y="${stripH/2 + 4}" class="andes-strip-lbl" fill="${tr.color}">${tr.name}</text>
+        <path d="${path}" style="stroke:${tr.color};fill:none;stroke-width:1.2"/>
+      </svg>`;
+  }
+  return strips;
+}
+
+function jumpToAndes(anom){
+  state.highlights = [
+    { start: anom.startBp, len: anom.endBp - anom.startBp, cls: anom.severity === 'high' ? 'mut' : 'target' },
+    { start: anom.peakBp, len: 1, cls: 'cut' },
+  ];
+  renderDNA();
+  $("dnaView").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const PER_LINE = 60;
+  const lineIdx = Math.floor(anom.startBp / PER_LINE);
+  $("dnaView").scrollTop = Math.max(0, lineIdx * 30 - 40);
+  logEvt('ANDES #'+(andesState.result.anomalies.indexOf(anom)+1)+' ('+anom.severity+', '+anom.type+') la '+anom.startBp+'-'+anom.endBp, 'crispr');
+}
+
+document.addEventListener('click', (e) => {
+  const f = e.target.closest('.andes-filter');
+  if (f){
+    andesState.filter = f.dataset.filter;
+    renderAndes();
+  }
+});
 
 // ---------- Restriction ----------
 function openRestrictionModal(){
@@ -572,12 +1022,76 @@ function parseFasta(text){
   return records[0] || { header: '', seq: '' };
 }
 
+// Maparea organisme NCBI -> UCSC genome assemblies
+const ORG_TO_UCSC_GENOME = {
+  human: 'hg38', mouse: 'mm39', rat: 'rn7',
+  zebrafish: 'danRer11', fly: 'dm6', yeast: 'sacCer3',
+  // (e.coli si arabidopsis nu sunt servite consistent de UCSC — fallback la NCBI)
+};
+
+function getSearchSource(){
+  const btn = $("searchSrc");
+  return (btn && btn.dataset.src) || 'ncbi';
+}
+
+function toggleSearchSource(){
+  const btn = $("searchSrc");
+  const cur = btn.dataset.src || 'ncbi';
+  const next = cur === 'ncbi' ? 'ucsc' : 'ncbi';
+  btn.dataset.src = next;
+  btn.textContent = next.toUpperCase();
+  closeSuggest();
+  logEvt('cautare globala: sursa = ' + next.toUpperCase(), 'info');
+}
+if ($("searchSrc")) $("searchSrc").addEventListener('click', toggleSearchSource);
+
+async function runGlobalSearchUCSC(){
+  const q = $("globalSearch").value.trim();
+  const org = $("searchOrg").value;
+  if (!q) return;
+  const genome = ORG_TO_UCSC_GENOME[org];
+  if (!genome){
+    logEvt(`UCSC: organismul "${org}" nu e disponibil — comuta pe NCBI sau alege uman/soarece/sobolan/zebrafish/musca/drojdie`, 'err');
+    return;
+  }
+  closeSuggest();
+  logEvt(`cautare UCSC: ${q} in ${genome}...`, 'info');
+  try {
+    const sUrl = `${UCSC_API}/search?search=${encodeURIComponent(q)};genome=${genome}`;
+    const sRes = await fetch(sUrl).then(r => r.json());
+    const categories = sRes.positionMatches || [];
+    const priority = ['knownGene', 'mane', 'ncbiRefSeqCurated', 'ncbiRefSeq', 'refGene', 'hgnc'];
+    let hit = null;
+    for (const p of priority){
+      const cat = categories.find(c => (c.name || c.trackName) === p);
+      if (cat && cat.matches && cat.matches.length){
+        const exact = cat.matches.find(m => (m.posName || '').split(/[\s(]/)[0].toUpperCase() === q.toUpperCase());
+        hit = exact || cat.matches[0];
+        if (hit){ hit._track = p; break; }
+      }
+    }
+    if (!hit){ for (const c of categories){ if (c.matches && c.matches.length){ hit = c.matches[0]; hit._track = c.name||c.trackName; break; } } }
+    if (!hit){ logEvt(`UCSC: ${q} in ${genome} negasit`, 'err'); return; }
+    const pm = (hit.position || '').match(/^([^:]+):(\d+)-(\d+)$/);
+    if (!pm){ logEvt('UCSC: pozitie invalida', 'err'); return; }
+    const chrom = pm[1], startG = +pm[2], endG = +pm[3];
+    const maxLen = 1500;
+    const fetchEnd = Math.min(endG, startG + maxLen);
+    const qUrl = `${UCSC_API}/getData/sequence?genome=${genome};chrom=${chrom};start=${startG};end=${fetchEnd}`;
+    const qRes = await fetch(qUrl).then(r => r.json());
+    const dna = (qRes.dna || '').toUpperCase();
+    if (!dna){ logEvt('UCSC: secventa goala', 'err'); return; }
+    setSequence(dna, `UCSC ${q} (${genome}) ${chrom}:${startG}-${fetchEnd}`, 'ok');
+  } catch(e){ logEvt('UCSC: '+e.message, 'err'); }
+}
+
 async function runGlobalSearch(){
+  if (getSearchSource() === 'ucsc') return runGlobalSearchUCSC();
   const q = $("globalSearch").value.trim();
   const org = $("searchOrg").value;
   if (!q){ return; }
   closeSuggest();
-  logEvt(`cautare: ${q} in ${org}...`, 'info');
+  logEvt(`cautare NCBI: ${q} in ${org}...`, 'info');
   try {
     const term = `${q}[Gene Name] AND ${org}[orgn] AND refseq_select[filter]`;
     const sR = await fetch(`${NCBI_API}/esearch.fcgi?db=nuccore&term=${encodeURIComponent(term)}&retmode=json&retmax=1`);
@@ -655,8 +1169,8 @@ async function fetchFromNCBI(){
   $("ncbiStatus").textContent = `caut ${query}...`;
   try {
     let accId = null;
-    // detecteaza numar de acces (NM_, XM_, NC_, NR_, XR_ etc.)
-    if (/^[A-Z]{1,2}_\d+/.test(query.toUpperCase())){
+    // detecteaza numar de acces RefSeq (NM_, NC_ etc.) sau GenBank (MK548699, AY123456 etc.)
+    if (/^[A-Z]{1,2}[\d_]/.test(query.toUpperCase())){
       accId = query;
     } else {
       // cauta dupa simbol gena
@@ -916,7 +1430,7 @@ async function askAI(question){
 const ACTION_ICONS = {
   load_gene:'📥', highlight_region:'🔦', run_crispr:'✂',
   compare_slots:'⇄', transcribe:'📜', translate_protein:'🧬',
-  build_feature:'⚙'
+  verify_seq:'✔', build_feature:'⚙'
 };
 
 function showActionChip(action, msgWrap){
@@ -925,7 +1439,8 @@ function showActionChip(action, msgWrap){
   chip.className = 'ai-action-chip';
   const ico = ACTION_ICONS[action.name] || '⚡';
   const detail = action.gene || action.guide || action.description || '';
-  chip.innerHTML = `${ico} <b>${esc(action.name)}</b>${detail ? ': '+esc(detail.substring(0,50)) : ''}`;
+  const src = action.name === 'load_gene' && action.source ? ` [${action.source.toUpperCase()}]` : '';
+  chip.innerHTML = `${ico} <b>${esc(action.name)}</b>${detail ? ': '+esc(detail.substring(0,50)) : ''}${src}`;
   // insert after the bot message
   const next = msgWrap ? msgWrap.nextSibling : null;
   chat.insertBefore(chip, next);
@@ -940,6 +1455,7 @@ async function executeLabAction(name, input){
     case 'compare_slots':     renderCompare(); logEvt('AI: compara A↔B', 'ok'); break;
     case 'transcribe':        doTranscribe(); break;
     case 'translate_protein': doTranslate(); break;
+    case 'verify_seq':        doVerify(); break;
     case 'build_feature':     await executeBuildFeature(input); break;
   }
 }
@@ -949,12 +1465,47 @@ async function executeLoadGene(input){
   const org  = input.organism || 'human';
   const slot = (input.slot === 'B') ? 'B' : 'A';
   const seqType = input.seq_type || 'cds';
+  const source = (input.source || 'ncbi').toLowerCase();
   if (!gene){ logEvt('AI load_gene: gena lipsa', 'err'); return; }
   state.active = slot;
-  logEvt(`AI: incarc ${gene} (${org}) → Slot ${slot}...`, 'info');
+  logEvt(`AI: incarc ${gene} (${org}, ${source}) → Slot ${slot}...`, 'info');
+
+  // UCSC: cauta dupa simbol in genomul corespunzator si incarca secventa genomica
+  if (source === 'ucsc'){
+    const genome = input.genome || ORG_TO_UCSC_GENOME[org];
+    if (!genome){ logEvt(`AI UCSC: organism "${org}" nesuportat`, 'err'); return; }
+    try {
+      const maxLen = parseInt(input.max_len, 10) || 1500;
+      const sRes = await fetch(`${UCSC_API}/search?search=${encodeURIComponent(gene)};genome=${genome}`).then(r => r.json());
+      const categories = sRes.positionMatches || [];
+      const priority = ['knownGene', 'mane', 'ncbiRefSeqCurated', 'ncbiRefSeq', 'refGene', 'hgnc'];
+      let hit = null;
+      for (const p of priority){
+        const cat = categories.find(c => (c.name || c.trackName) === p);
+        if (cat && cat.matches && cat.matches.length){
+          const exact = cat.matches.find(m => (m.posName || '').split(/[\s(]/)[0].toUpperCase() === gene.toUpperCase());
+          hit = exact || cat.matches[0];
+          if (hit){ hit._track = p; break; }
+        }
+      }
+      if (!hit){ for (const c of categories){ if (c.matches && c.matches.length){ hit = c.matches[0]; break; } } }
+      if (!hit){ logEvt(`AI UCSC: ${gene} in ${genome} negasit`, 'err'); return; }
+      const pm = (hit.position || '').match(/^([^:]+):(\d+)-(\d+)$/);
+      if (!pm){ logEvt('AI UCSC: pozitie invalida', 'err'); return; }
+      const chrom = pm[1], startG = +pm[2], endG = +pm[3];
+      const fetchEnd = Math.min(endG, startG + maxLen);
+      const qRes = await fetch(`${UCSC_API}/getData/sequence?genome=${genome};chrom=${chrom};start=${startG};end=${fetchEnd}`).then(r => r.json());
+      const dna = (qRes.dna || '').toUpperCase();
+      if (!dna){ logEvt('AI UCSC: secventa goala', 'err'); return; }
+      setSequence(dna, `AI UCSC: ${gene} (${genome}) ${chrom}:${startG}-${fetchEnd}`, 'ok');
+    } catch(e){ logEvt('AI UCSC: '+e.message, 'err'); }
+    return;
+  }
+
+  // NCBI (default)
   try {
     let accId;
-    if (/^[A-Z]{1,2}_\d+/.test(gene.toUpperCase())){
+    if (/^[A-Z]{1,2}[\d_]/.test(gene.toUpperCase())){
       accId = gene;
     } else {
       const filter = seqType === 'cds' ? 'refseq_select[filter]' : 'refseq[filter] AND biomol_mrna[PROP]';
@@ -962,7 +1513,15 @@ async function executeLoadGene(input){
       const sr = await fetch(`${NCBI_API}/esearch.fcgi?db=nuccore&term=${encodeURIComponent(term)}&retmode=json&retmax=1`);
       const sj = await sr.json();
       const ids = (sj.esearchresult && sj.esearchresult.idlist) || [];
-      if (!ids.length){ logEvt(`AI: ${gene} nu gasit in ${org}`, 'err'); return; }
+      if (!ids.length){
+        // Fallback automat: incearca UCSC pentru organismele suportate
+        if (ORG_TO_UCSC_GENOME[org]){
+          logEvt(`AI: ${gene} negasit in NCBI/${org} — incerc UCSC...`, 'info');
+          await executeLoadGene({ ...input, source: 'ucsc' });
+          return;
+        }
+        logEvt(`AI: ${gene} nu gasit in ${org}`, 'err'); return;
+      }
       accId = ids[0];
     }
     const rettype = seqType === 'cds' ? 'fasta_cds_na' : 'fasta';
