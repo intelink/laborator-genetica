@@ -84,6 +84,9 @@ $("btnReset").addEventListener("click", ()=>{
   $("seqVerifyCard").style.display = 'none';
   $("offtargetCard").style.display = 'none';
   $("andesCard").style.display = 'none';
+  $("synsorCard").style.display = 'none';
+  $("andesVcfCard").style.display = 'none';
+  $("stegoCard").style.display = 'none';
   $("mutSummary").innerHTML = '';
 });
 
@@ -101,6 +104,9 @@ function setSequence(seq, label, kind, acc){
   $("seqVerifyCard").style.display = 'none';
   $("offtargetCard").style.display = 'none';
   $("andesCard").style.display = 'none';
+  $("synsorCard").style.display = 'none';
+  $("andesVcfCard").style.display = 'none';
+  $("stegoCard").style.display = 'none';
   $("mutSummary").innerHTML = '';
   updateSlotChips();
   renderAll();
@@ -143,7 +149,8 @@ $("btnSwapAB").addEventListener("click", () => {
 document.querySelectorAll('[data-tool]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     const t = btn.dataset.tool;
-    if (!state.seq && t !== 'complement'){
+    // andesvcf lucreaza pe VCF, stego poate fi folosit pt encode chiar fara secventa
+    if (!state.seq && t !== 'complement' && t !== 'andesvcf' && t !== 'stego'){
       logEvt('nu ai secventa in Slot '+state.active+' — cauta una sau incarca un preset', 'err');
       return;
     }
@@ -153,6 +160,9 @@ document.querySelectorAll('[data-tool]').forEach(btn=>{
     else if (t === 'crispr') { openCrisprModal(); }
     else if (t === 'offtarget') { openOffTargetModal(); }
     else if (t === 'andes') { openAndesModal(); }
+    else if (t === 'synsor') { runSynsor(); }
+    else if (t === 'andesvcf') { openAndesVcfModal(); }
+    else if (t === 'stego') { openStegoModal(); }
     else if (t === 'restriction') { openRestrictionModal(); }
     else if (t === 'pcr') { openPcrModal(); }
     else if (t === 'gel') { openGelModal(); }
@@ -710,6 +720,447 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// ---------- DNA Steganography (encode + scan) ----------
+const stegoState = { mode: 'encode', scheme: 'base-4', lastEncoded: '', lastScan: null };
+
+function openStegoModal(){
+  openModal(`
+    <h3>🔐 Cod secret in ADN</h3>
+    <div class="seg" style="margin-bottom:10px">
+      <button class="seg-btn ${stegoState.mode==='encode'?'active':''}" onclick="setStegoMode('encode')">✎ Encodeaza</button>
+      <button class="seg-btn ${stegoState.mode==='scan'?'active':''}" onclick="setStegoMode('scan')">🔍 Scaneaza</button>
+    </div>
+    <div id="stegoModalBody"></div>
+  `);
+  renderStegoModal();
+}
+window.setStegoMode = function(m){ stegoState.mode = m; renderStegoModal(); openStegoModal(); };
+window.setStegoScheme = function(s){ stegoState.scheme = s; renderStegoModal(); };
+
+function renderStegoModal(){
+  const body = $("stegoModalBody");
+  if (!body) return;
+  if (stegoState.mode === 'encode'){
+    body.innerHTML = `
+      <label>schema codare</label>
+      <div class="seg" style="margin-bottom:8px">
+        <button class="seg-btn ${stegoState.scheme==='base-4'?'active':''}" onclick="setStegoScheme('base-4')">Base-4 (universal)</button>
+        <button class="seg-btn ${stegoState.scheme==='codon'?'active':''}" onclick="setStegoScheme('codon')">Codon (64 caractere)</button>
+      </div>
+      <label style="margin-top:6px">mesajul de codat</label>
+      <textarea id="stegoMsg" rows="2" class="holo-input" placeholder="Scrie mesajul aici..." spellcheck="false">HELLO LAB 2026</textarea>
+      <div class="row" style="margin-top:8px;gap:6px;display:flex">
+        <button class="btn holo-btn" onclick="doStegoEncode()" style="flex:1">↳ codifica</button>
+        <button class="btn-ghost" onclick="doStegoInsert()" id="btnStegoInsert" disabled>insereaza in Slot ${state.active}</button>
+      </div>
+      <div class="hint" id="stegoEncodeOut" style="margin-top:10px"></div>
+      <div class="actions">
+        <button class="btn-ghost" onclick="closeModal()">inchide</button>
+      </div>`;
+  } else {
+    const hasSeq = !!state.seq;
+    body.innerHTML = `
+      <div class="hint" style="margin-bottom:8px">
+        Scaneaza secvența activa <b>Slot ${state.active}</b> ${hasSeq ? '('+state.seq.length+' bp)' : '(gol)'} pentru mesaje ascunse.
+        Incearca Base-4 cu 4 offset-uri si Codon cu 3 offset-uri.
+      </div>
+      <label>lungime minima text decodat</label>
+      <select id="stegoMinLen">
+        <option value="4">4 caractere — agresiv (multe false-pozitive)</option>
+        <option value="6" selected>6 caractere — recomandat</option>
+        <option value="10">10 caractere — strict</option>
+      </select>
+      <label style="margin-top:8px">prag scor</label>
+      <select id="stegoMinScore">
+        <option value="1">1.0 — sensibil</option>
+        <option value="2" selected>2.0 — recomandat</option>
+        <option value="3">3.0 — doar mesaje clare</option>
+      </select>
+      <div class="actions">
+        <button class="btn-ghost" onclick="closeModal()">anuleaza</button>
+        <button class="btn" onclick="doStegoScan()" ${!hasSeq?'disabled':''}>🔍 scaneaza</button>
+      </div>`;
+  }
+}
+
+window.doStegoEncode = function(){
+  const msg = $("stegoMsg").value;
+  if (!msg){ logEvt('stego: mesaj gol', 'err'); return; }
+  let dna;
+  if (stegoState.scheme === 'base-4') dna = BIO.encodeBase4(msg);
+  else dna = BIO.encodeCodon(msg);
+  stegoState.lastEncoded = dna;
+  $("stegoEncodeOut").innerHTML = `
+    <div class="stego-out-meta">${msg.length} caractere → ${dna.length} bp (${stegoState.scheme})</div>
+    <textarea class="holo-input stego-out-seq" rows="3" readonly>${esc(dna)}</textarea>
+    <button class="btn-ghost" onclick="navigator.clipboard.writeText('${dna}')" style="margin-top:4px">📋 copiaza</button>`;
+  $("btnStegoInsert").disabled = false;
+};
+
+window.doStegoInsert = function(){
+  if (!stegoState.lastEncoded){ logEvt('stego: nimic de inserat', 'err'); return; }
+  if (!state.seq) {
+    // Folosim direct ca slot continut
+    setSequence(stegoState.lastEncoded, 'stego: '+stegoState.scheme, 'crispr');
+    closeModal();
+    return;
+  }
+  // Insereaza la o pozitie — cere user-ului
+  const posStr = prompt(`Insereaza la pozitia (0..${state.seq.length}):`, state.seq.length);
+  if (posStr === null) return;
+  const pos = Math.max(0, Math.min(state.seq.length, parseInt(posStr, 10) || 0));
+  state.prevSeq = state.seq;
+  state.seq = state.seq.slice(0, pos) + stegoState.lastEncoded + state.seq.slice(pos);
+  state.highlights = [{ start: pos, len: stegoState.lastEncoded.length, cls: 'mut' }];
+  renderAll();
+  closeModal();
+  logEvt(`stego: mesaj ${stegoState.scheme} inserat la poz ${pos} (+${stegoState.lastEncoded.length} bp)`, 'crispr');
+};
+
+window.doStegoScan = function(){
+  if (!state.seq){ logEvt('stego: nicio secventa de scanat', 'err'); return; }
+  const minLen = parseInt($("stegoMinLen").value, 10);
+  const minScore = parseFloat($("stegoMinScore").value);
+  const candidates = BIO.steganoScan(state.seq, { minLen, minScore });
+  stegoState.lastScan = candidates;
+  closeModal();
+  renderStegoResults();
+  logEvt('stego scan: '+candidates.length+' candidati', candidates.length ? 'crispr' : 'info');
+  $("stegoCard").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+
+function renderStegoResults(){
+  const cands = stegoState.lastScan || [];
+  $("stegoCard").style.display = 'block';
+  $("stegoSlotTag").textContent = 'SLOT ' + state.active;
+  if (!cands.length){
+    $("stegoBody").innerHTML = '<div class="stego-empty">Nicio secventa citibila gasita peste pragul ales. Incearca prag mai mic sau o secventa cu mesaj ascuns.</div>';
+    return;
+  }
+  let html = `<div class="stego-results-head">Candidati găsiți: <b>${cands.length}</b> · ranking dupa scor de citibilitate</div>`;
+  html += '<div class="stego-list">';
+  cands.forEach((c, i) => {
+    const cls = c.score >= 4 ? 'stego-hi' : c.score >= 2.5 ? 'stego-md' : 'stego-lo';
+    const dnaPreview = state.seq.slice(c.dna_start, c.dna_end);
+    const dnaShort = dnaPreview.length > 60 ? dnaPreview.slice(0, 60) + '…' : dnaPreview;
+    html += `
+      <div class="stego-item ${cls}" data-idx="${i}">
+        <div class="stego-rank">#${i+1}</div>
+        <div class="stego-body-row">
+          <div class="stego-row1">
+            <span class="stego-scheme">${esc(c.scheme)} <span class="stego-off">off=${c.offset}</span></span>
+            <span class="stego-pos">DNA ${c.dna_start}–${c.dna_end} <span class="dim">(${c.dna_end - c.dna_start}bp)</span></span>
+            <span class="stego-score">scor <b>${c.score.toFixed(2)}</b></span>
+          </div>
+          <div class="stego-text">${esc(c.text)}</div>
+          <div class="stego-dna">${esc(dnaShort)}</div>
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+  $("stegoBody").innerHTML = html;
+  $("stegoBody").querySelectorAll('.stego-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const c = cands[idx];
+      state.highlights = [{ start: c.dna_start, len: c.dna_end - c.dna_start, cls: 'target' }];
+      renderDNA();
+      $("dnaView").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const PER_LINE = 60;
+      $("dnaView").scrollTop = Math.max(0, Math.floor(c.dna_start / PER_LINE) * 30 - 40);
+      logEvt(`stego: "${c.text.slice(0,30)}" @ ${c.dna_start}-${c.dna_end} (${c.scheme})`, 'crispr');
+    });
+  });
+}
+
+// ---------- ANDES-VCF (real, server-side pipeline) ----------
+const andesVcfState = { result: null, filter: 'M' };
+
+function openAndesVcfModal(){
+  openModal(`
+    <h3>∿+ ANDES-VCF · port faithful</h3>
+    <div class="hint" style="margin-bottom:10px">
+      Pipeline-ul real din <b>riakanjilal/ANDES (2024)</b>. Accepta VCF cu
+      <b>multi-sample SNPs</b> pe un singur cromosom. Minim 200 SNPuri si 4 sample-uri.
+    </div>
+    <label>VCF (upload fisier)</label>
+    <input type="file" id="andesVcfFile" accept=".vcf,.txt" class="holo-input">
+    <label style="margin-top:10px">sau lipeste continut VCF aici</label>
+    <textarea id="andesVcfText" rows="5" class="holo-input"
+      placeholder="##fileformat=VCFv4.1&#10;#CHROM POS ID REF ALT QUAL FILTER INFO FORMAT sample1 sample2 ...&#10;22 16050075 . A G . PASS . GT 0|0 1|0 ..." spellcheck="false"></textarea>
+    <label style="margin-top:10px">prag p-value (anomalii)</label>
+    <select id="andesVcfThresh">
+      <option value="0.01">10⁻² — sensibil</option>
+      <option value="0.001" selected>10⁻³ — recomandat</option>
+      <option value="0.0001">10⁻⁴ — conservator</option>
+      <option value="0.00001">10⁻⁵ — doar peak-uri majore</option>
+    </select>
+    <div class="hint" style="margin-top:8px;font-size:11px">
+      <b>Demo:</b> <a href="https://raw.githubusercontent.com/riakanjilal/ANDES/main/CEU22.vcf" target="_blank" style="color:var(--cy)">CEU22.vcf</a>
+      (chr22, 1000 Genomes CEU, 99 indivizi, 994 SNPs). Pipeline ~1s pe acest VCF.
+    </div>
+    <div class="actions">
+      <button class="btn-ghost" onclick="closeModal()">anuleaza</button>
+      <button class="btn" onclick="runAndesVcf()">∿+ scaneaza</button>
+    </div>`);
+}
+
+async function runAndesVcf(){
+  const fileInput = $("andesVcfFile");
+  const textInput = $("andesVcfText");
+  const thresh = parseFloat($("andesVcfThresh").value);
+  let vcfText = (textInput.value || '').trim();
+  if (!vcfText && fileInput.files && fileInput.files[0]){
+    vcfText = await fileInput.files[0].text();
+  }
+  closeModal();
+  if (!vcfText){ logEvt('ANDES-VCF: VCF gol', 'err'); return; }
+
+  logEvt('ANDES-VCF: pipeline pornit (poate dura 1-30s)...', 'info');
+  $("andesVcfCard").style.display = 'block';
+  $("andesVcfSummary").innerHTML = '<div class="hint">procesare in curs...</div>';
+  try {
+    const r = await fetch('/api/andes/vcf', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ vcf: vcfText, p_threshold: thresh })
+    });
+    const j = await r.json();
+    if (!j.ok){ logEvt('ANDES-VCF: '+(j.reason||'esuat'), 'err'); $("andesVcfSummary").innerHTML = '<div class="hint">'+esc(j.reason||'?')+'</div>'; return; }
+    andesVcfState.result = j;
+    andesVcfState.filter = 'M';
+    renderAndesVcf();
+    logEvt('ANDES-VCF: '+j.n_snps+' SNPs, '+j.n_samples+' samples, '+j.anomalies_M.length+' anomalii MD-M, '+j.anomalies_F.length+' MD-F', 'crispr');
+    $("andesVcfCard").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch(e){
+    logEvt('ANDES-VCF retea: '+e.message, 'err');
+  }
+}
+
+function renderAndesVcf(){
+  const r = andesVcfState.result;
+  if (!r){ $("andesVcfCard").style.display = 'none'; return; }
+  $("andesVcfCard").style.display = 'block';
+
+  const hi_M = r.anomalies_M.length;
+  const hi_F = r.anomalies_F.length;
+  $("andesVcfSummary").innerHTML = `
+    <div class="andes-stat-row">
+      <div class="andes-stat"><div class="lab">chrom</div><div class="val">${esc(r.chrom)}</div></div>
+      <div class="andes-stat"><div class="lab">SNPs</div><div class="val">${r.n_snps}</div></div>
+      <div class="andes-stat"><div class="lab">samples</div><div class="val">${r.n_samples}</div></div>
+      <div class="andes-stat"><div class="lab">ferestre</div><div class="val">${r.n_windows}</div></div>
+      <div class="andes-stat"><div class="lab">stretches FDA</div><div class="val">${r.n_stretches}</div></div>
+      <div class="andes-stat andes-hi"><div class="lab">anom MD-M</div><div class="val">${hi_M}</div></div>
+      <div class="andes-stat andes-md"><div class="lab">anom MD-F</div><div class="val">${hi_F}</div></div>
+    </div>`;
+
+  // filter buttons
+  document.querySelectorAll('.andes-filter[data-vcf-filter]').forEach(b => {
+    b.classList.toggle('active', b.dataset.vcfFilter === andesVcfState.filter);
+    b.onclick = () => { andesVcfState.filter = b.dataset.vcfFilter; renderAndesVcf(); };
+  });
+
+  $("andesVcfChartWrap").innerHTML = renderAndesVcfChart(r, andesVcfState.filter);
+
+  // ranked anomaly list
+  const anomalies = (andesVcfState.filter === 'M') ? r.anomalies_M : r.anomalies_F;
+  const listEl = $("andesVcfList");
+  if (!anomalies.length){
+    listEl.innerHTML = '<div class="andes-empty">Nicio anomalie sub pragul ales pentru ' + andesVcfState.filter + '.</div>';
+    return;
+  }
+  // sortat dupa min_p
+  const sorted = anomalies.slice().sort((a,b) => a.min_p - b.min_p);
+  let html = '';
+  sorted.forEach((a, i) => {
+    const log10 = -Math.log10(Math.max(a.min_p, 1e-300));
+    const sev = log10 >= 10 ? 'high' : log10 >= 5 ? 'moderate' : 'low';
+    html += `
+      <div class="andes-item andes-sv-${sev}" data-peak="${a.peak}">
+        <div class="andes-rank">#${i+1}</div>
+        <div class="andes-body">
+          <div class="andes-row1">
+            <span class="andes-sev-badge andes-sv-${sev}">${sev.toUpperCase()}</span>
+            <span class="andes-type">${r.chrom}:${a.start.toLocaleString()}–${a.end.toLocaleString()}</span>
+            <span class="andes-pos"><span class="dim">peak</span> ${a.peak.toLocaleString()} · <span class="dim">${a.n_windows} ferestre</span></span>
+            <span class="andes-score">p = <b>${a.min_p.toExponential(2)}</b> · -log₁₀ = <b>${log10.toFixed(1)}</b></span>
+          </div>
+        </div>
+      </div>`;
+  });
+  listEl.innerHTML = html;
+  listEl.querySelectorAll('.andes-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const peak = parseInt(el.dataset.peak, 10);
+      logEvt(`ANDES-VCF: jump la ${r.chrom}:${peak.toLocaleString()}`, 'info');
+    });
+  });
+}
+
+function renderAndesVcfChart(r, which){
+  const W = 740, H = 220;
+  const m = { t: 14, r: 14, b: 30, l: 50 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  // colecteaza pozitii + log10 p pentru tracker-ul ales
+  const key = which === 'M' ? 'log10_p_M' : 'log10_p_F';
+  const data = r.windows.filter(w => w[key] != null && isFinite(w[key]));
+  if (!data.length) return '<div class="hint">Fara date</div>';
+  const xs = data.map(d => d.pos);
+  const ys = data.map(d => d[key]);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymax = Math.max(...ys, 4);
+  const xScale = x => m.l + (x - xmin) / (xmax - xmin) * iw;
+  const yScale = v => m.t + (1 - v / ymax) * ih;
+  const threshLog = -Math.log10(r.p_threshold);
+  const yT = yScale(threshLog);
+
+  // anomaly bands
+  const anomalies = which === 'M' ? r.anomalies_M : r.anomalies_F;
+  let bands = '';
+  for (const a of anomalies){
+    const x1 = xScale(a.start), x2 = xScale(a.end);
+    bands += `<rect x="${x1}" y="${m.t}" width="${Math.max(2, x2-x1)}" height="${ih}" fill="rgba(255,43,90,0.15)"/>`;
+  }
+
+  // composite path
+  let path = '';
+  for (let i = 0; i < data.length; i++){
+    const x = xScale(data[i].pos), y = yScale(ys[i]);
+    path += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+  }
+  // ticks
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const pos = xmin + (xmax - xmin) * f;
+    return `<text x="${xScale(pos)}" y="${H - 10}" class="andes-ax-lbl" text-anchor="middle">${Math.round(pos).toLocaleString()}</text>`;
+  }).join('');
+  const yTicks = [];
+  for (let v = 0; v <= ymax; v += Math.max(1, Math.round(ymax / 5))){
+    yTicks.push(`<line x1="${m.l}" x2="${W-m.r}" y1="${yScale(v)}" y2="${yScale(v)}" class="andes-grid"/>`);
+    yTicks.push(`<text x="${m.l-6}" y="${yScale(v)+3}" class="andes-ax-lbl" text-anchor="end">${v}</text>`);
+  }
+
+  return `
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="andes-svg">
+      ${yTicks.join('')}
+      ${bands}
+      <line x1="${m.l}" x2="${W-m.r}" y1="${yT}" y2="${yT}" class="andes-thresh"/>
+      <text x="${W-m.r}" y="${yT-4}" class="andes-ax-lbl" text-anchor="end" fill="#ff9333">prag -log₁₀(p)=${threshLog.toFixed(1)}</text>
+      <path d="${path}" class="andes-composite" style="stroke:${which==='M'?'#00ff88':'#ff3df5'}"/>
+      <text x="${m.l}" y="${m.t-2}" class="andes-ax-lbl" fill="#8cab9d">${which==='M'?'MD-M (Moments, 8 features)':'MD-F (FDA, 216 features)'} — -log₁₀(p)</text>
+      <text x="${W/2}" y="${H - 1}" class="andes-ax-lbl" fill="#8cab9d" text-anchor="middle">${r.chrom} position (bp)</text>
+      ${xTicks}
+    </svg>`;
+}
+
+// ---------- Synsor (engineered vs natural) ----------
+const synsorState = { result: null };
+
+function runSynsor(){
+  const r = BIO.synsorScan(state.seq, {});
+  if (!r.ok){ logEvt('Synsor: '+r.reason, 'err'); return; }
+  synsorState.result = r;
+  renderSynsor();
+  logEvt(`Synsor: P(engineered)=${r.probability}% → ${r.verdict}` + (r.smokingGun ? ' · '+r.smokingGun : ''), r.probability >= 50 ? 'crispr' : 'ok');
+  $("synsorCard").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderSynsor(){
+  const r = synsorState.result;
+  if (!r){ $("synsorCard").style.display = 'none'; return; }
+  $("synsorCard").style.display = 'block';
+  $("synsorSlotTag").textContent = 'SLOT ' + state.active;
+
+  // gauge
+  const fill = $("synGaugeFill");
+  fill.style.width = r.probability + '%';
+  let gaugeColor;
+  if (r.probability >= 70) gaugeColor = 'linear-gradient(90deg,var(--rd),var(--or))';
+  else if (r.probability >= 40) gaugeColor = 'linear-gradient(90deg,var(--ye),var(--or))';
+  else if (r.probability >= 20) gaugeColor = 'linear-gradient(90deg,var(--cy),var(--ye))';
+  else gaugeColor = 'linear-gradient(90deg,var(--lime),var(--cy))';
+  fill.style.background = gaugeColor;
+
+  $("synProb").textContent = r.probability;
+  const v = $("synVerdict");
+  v.textContent = r.verdict.toUpperCase();
+  v.className = 'syn-verdict';
+  if (r.probability >= 70) v.classList.add('syn-v-hi');
+  else if (r.probability >= 40) v.classList.add('syn-v-mid');
+  else v.classList.add('syn-v-lo');
+
+  $("synSmokeGun").innerHTML = r.smokingGun
+    ? `<span class="syn-smoke-chip">⚠ smoking-gun: ${esc(r.smokingGun)}</span>`
+    : '';
+
+  // per-signal bars
+  const SIGNAL_LABELS = {
+    motif: { lbl: 'motive engineered', color: 'var(--rd)' },
+    codon: { lbl: 'codon-bias', color: 'var(--mg)' },
+    kmer:  { lbl: 'k-mer signature', color: 'var(--cy)' },
+    gc:    { lbl: 'GC uniformity', color: 'var(--ye)' },
+    pal:   { lbl: 'palindromuri (MCS)', color: 'var(--or)' },
+  };
+  let barsHtml = '';
+  for (const key of ['motif','codon','kmer','gc','pal']){
+    const v = r.breakdown[key];
+    const lbl = SIGNAL_LABELS[key];
+    const pct = v == null ? 0 : Math.round(v * 100);
+    const stateTxt = v == null ? '<span class="syn-bar-na">n/a</span>' : pct + '%';
+    let extra = '';
+    const s = r.signals[key];
+    if (key === 'motif') extra = `${s.count} hit-uri, ${Object.keys(s.byCat).length} categorii`;
+    else if (key === 'codon' && s.entropy != null) extra = `entropie codon=${s.entropy.toFixed(2)}`;
+    else if (key === 'kmer' && s.chi2_per_kb != null) extra = `χ²/kb=${s.chi2_per_kb.toFixed(1)} (k=${s.k})`;
+    else if (key === 'gc' && s.mean != null) extra = `μ=${(s.mean*100).toFixed(0)}% σ=${(s.std*100).toFixed(2)}%`;
+    else if (key === 'pal' && s.density_per_kb != null) extra = `${s.density_per_kb.toFixed(1)}/kb`;
+    barsHtml += `
+      <div class="syn-bar-row">
+        <div class="syn-bar-lbl">${esc(lbl.lbl)}</div>
+        <div class="syn-bar-track"><div class="syn-bar-fill" style="width:${pct}%;background:${lbl.color}"></div></div>
+        <div class="syn-bar-val">${stateTxt} <span class="syn-bar-extra">${esc(extra)}</span></div>
+      </div>`;
+  }
+  $("synBars").innerHTML = barsHtml;
+
+  // motifs list
+  $("synMotifCount").textContent = r.motifs.length ? `(${r.motifs.length})` : '';
+  if (!r.motifs.length){
+    $("synMotifs").innerHTML = '<div class="syn-empty">Niciun motiv engineered cunoscut detectat.</div>';
+    return;
+  }
+  const CAT_COLOR = {
+    promoter:'var(--cy)', operator:'#6ae4ff', polyA:'#0080ff',
+    rbs:'var(--ye)', kozak:'var(--ye)', terminator:'var(--or)',
+    tag:'var(--mg)', '2A':'#ff7df8', fluor:'var(--lime)',
+    ori:'#10a37f', resistance:'var(--rd)', recomb:'var(--or)', crispr:'#ff3df5',
+  };
+  let mHtml = '';
+  r.motifs.forEach((m, idx) => {
+    const color = CAT_COLOR[m.cat] || 'var(--dim)';
+    mHtml += `
+      <div class="syn-motif" data-idx="${idx}" style="border-color:${color}55">
+        <div class="syn-motif-cat" style="color:${color};border-color:${color}66">${esc(m.cat)}</div>
+        <div class="syn-motif-name">${esc(m.name)}</div>
+        <div class="syn-motif-pos">${m.start}–${m.end} <span class="dim">fir ${m.strand}</span></div>
+      </div>`;
+  });
+  $("synMotifs").innerHTML = mHtml;
+  $("synMotifs").querySelectorAll('.syn-motif').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const m = r.motifs[idx];
+      state.highlights = [{ start: m.start, len: m.end - m.start, cls: 'target' }];
+      renderDNA();
+      $("dnaView").scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const PER_LINE = 60;
+      const lineIdx = Math.floor(m.start / PER_LINE);
+      $("dnaView").scrollTop = Math.max(0, lineIdx * 30 - 40);
+      logEvt('Synsor: '+m.name+' @ '+m.start, 'crispr');
+    });
+  });
+}
+
 // ---------- Restriction ----------
 function openRestrictionModal(){
   const opts = Object.entries(RESTRICTION_ENZYMES).map(([n, e])=>
@@ -921,6 +1372,10 @@ window.applyMutate = applyMutate;
 window.applyCrispr = applyCrispr;
 window.applyRestriction = applyRestriction;
 window.applyPcr = applyPcr;
+// Tool modals (apelate din onclick="" in modal HTML — au nevoie sa fie pe window)
+window.runOffTarget = runOffTarget;
+window.runAndes = runAndes;
+window.runAndesVcf = runAndesVcf;
 
 // ====== GLOBAL SEARCH BAR ======
 const NCBI_API = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
@@ -1321,6 +1776,148 @@ $("btnSimilarRegions").addEventListener("click", renderSimilarRegions);
 // ====== AI ASSISTANT ======
 const ACTION_PREFIX = 'GENETICA_ACTION:';
 
+// ---------- model picker ----------
+let aiSelectedModel = localStorage.getItem('aiModel') || '';
+function updateModelTag(){
+  const tag = $("aiModelTag");
+  if (!tag) return;
+  const m = aiSelectedModel || '';
+  let label = 'ollama·local', cls = 'ai-tag-local';
+  if (m.startsWith('claude:')){ label = 'claude·cloud'; cls = 'ai-tag-claude'; }
+  else if (m.startsWith('codex:')){ label = 'codex·cloud'; cls = 'ai-tag-codex'; }
+  else if (m.startsWith('grok:')){ label = 'grok·cloud'; cls = 'ai-tag-grok'; }
+  else if (m.endsWith(':cloud')){ label = 'ollama·cloud'; cls = 'ai-tag-cloud'; }
+  tag.textContent = label;
+  tag.className = 'ai-model-tag ' + cls;
+}
+
+// ---------- hybrid (Claude -> Ollama fallback) ----------
+let aiHybrid = localStorage.getItem('aiHybrid') === '1';
+let aiHybridModel = localStorage.getItem('aiHybridModel') || '';
+async function loadHybridModels(allModels){
+  const sel = $("aiHybridSel");
+  const chk = $("aiHybrid");
+  if (!sel || !chk) return;
+  // doar Ollama (local + cloud)
+  const ollama = (allModels || []).filter(m => m.provider === 'ollama');
+  // ordoneaza abliterated primele (refuza mai putin)
+  ollama.sort((a, b) => {
+    const aA = a.name.toLowerCase().includes('abliterated') ? 0 : 1;
+    const bA = b.name.toLowerCase().includes('abliterated') ? 0 : 1;
+    if (aA !== bA) return aA - bA;
+    return a.name.localeCompare(b.name);
+  });
+  sel.innerHTML = '';
+  for (const m of ollama){
+    const o = document.createElement('option');
+    o.value = m.name;
+    o.textContent = m.label || m.name;
+    sel.appendChild(o);
+  }
+  // default: primul abliterated, sau primul disponibil
+  if (!aiHybridModel || ![...sel.options].some(o => o.value === aiHybridModel)){
+    aiHybridModel = (sel.options[0] && sel.options[0].value) || '';
+  }
+  sel.value = aiHybridModel;
+  chk.checked = aiHybrid;
+  sel.disabled = !aiHybrid;
+
+  chk.addEventListener('change', () => {
+    aiHybrid = chk.checked;
+    sel.disabled = !aiHybrid;
+    localStorage.setItem('aiHybrid', aiHybrid ? '1' : '0');
+    logEvt('hybrid AI: ' + (aiHybrid ? 'on ('+aiHybridModel+')' : 'off'), 'info');
+  });
+  sel.addEventListener('change', () => {
+    aiHybridModel = sel.value;
+    localStorage.setItem('aiHybridModel', aiHybridModel);
+    logEvt('hybrid fallback: ' + aiHybridModel, 'info');
+  });
+}
+
+// Pattern-uri pentru refuz fals-pozitiv (EN + RO).
+const REFUSAL_PATTERNS = [
+  /\bi (can'?t|cannot|won'?t|will not) (help|assist|provide|do that|comply|engage)/i,
+  /\bi'?m (unable|not able|not comfortable|sorry, but)/i,
+  /against (my|the|our) (policy|policies|guidelines|values|principles)/i,
+  /\bviolat(es?|ing) (the |my |our )?(policy|policies|guidelines|terms)/i,
+  /\b(potentially )?(harmful|dangerous|unethical)\b[^.]*\b(cannot|won'?t|unable|refuse|decline)/i,
+  /\bi (must|need to) (decline|refuse)/i,
+  // Romanian
+  /\bnu (pot|reusesc|imi pot permite) sa (te |va )?(ajut|ofer|furnizez|raspund)/i,
+  /\bnu (va |iti )?pot (oferi|furniza|raspunde|ajuta|da)/i,
+  /(impotriva|contra) (politicilor|regulilor|principiilor|valorilor)/i,
+  /\bnu este (etic|sigur|adecvat|recomandat) sa/i,
+  /\bimi pare rau,? dar nu/i,
+  /\b(refuz|trebuie sa refuz) (sa |aceasta)/i,
+];
+
+function detectRefusal(text){
+  if (!text) return false;
+  const t = text.trim();
+  if (t.length < 20) return false;
+  // Daca a emis o actiune, e clar ca nu a refuzat
+  if (t.includes('GENETICA_ACTION:')) return false;
+  // Tipic refuzul e in primele ~600 caractere
+  const head = t.slice(0, 800);
+  return REFUSAL_PATTERNS.some(p => p.test(head));
+}
+
+async function loadAiModelsAndHybrid(){
+  // unified: incarca ambele
+  try {
+    const r = await fetch('/api/ai/models');
+    const j = await r.json();
+    await loadAiModelsFromJson(j);
+    await loadHybridModels(j.models || []);
+  } catch(e){
+    console.warn('nu pot incarca modelele:', e);
+  }
+}
+async function loadAiModelsFromJson(j){
+  const sel = $("aiModelSel");
+  if (!sel) return;
+  sel.innerHTML = '';
+  const claudeGroup = document.createElement('optgroup');
+  claudeGroup.label = 'Claude (cloud, Anthropic)';
+  const codexGroup = document.createElement('optgroup');
+  codexGroup.label = 'Codex (cloud, OpenAI)';
+  const grokGroup = document.createElement('optgroup');
+  grokGroup.label = 'Grok (cloud, xAI)';
+  const ollamaLocal = document.createElement('optgroup');
+  ollamaLocal.label = 'Ollama local (offline)';
+  const ollamaCloud = document.createElement('optgroup');
+  ollamaCloud.label = 'Ollama cloud';
+  for (const m of (j.models || [])){
+    const o = document.createElement('option');
+    o.value = m.name;
+    o.textContent = m.label || m.name;
+    o.dataset.provider = m.provider;
+    if (m.provider === 'claude') claudeGroup.appendChild(o);
+    else if (m.provider === 'codex') codexGroup.appendChild(o);
+    else if (m.provider === 'grok') grokGroup.appendChild(o);
+    else if (m.size === 'cloud') ollamaCloud.appendChild(o);
+    else ollamaLocal.appendChild(o);
+  }
+  if (claudeGroup.children.length) sel.appendChild(claudeGroup);
+  if (codexGroup.children.length) sel.appendChild(codexGroup);
+  if (grokGroup.children.length) sel.appendChild(grokGroup);
+  if (ollamaLocal.children.length) sel.appendChild(ollamaLocal);
+  if (ollamaCloud.children.length) sel.appendChild(ollamaCloud);
+  const wanted = aiSelectedModel || j.default || 'claude:opus';
+  const opt = [...sel.options].find(o => o.value === wanted);
+  sel.value = opt ? wanted : (j.default || sel.options[0].value);
+  aiSelectedModel = sel.value;
+  updateModelTag();
+  sel.onchange = () => {
+    aiSelectedModel = sel.value;
+    localStorage.setItem('aiModel', aiSelectedModel);
+    updateModelTag();
+    logEvt('asistent AI: model = ' + aiSelectedModel, 'info');
+  };
+}
+loadAiModelsAndHybrid();
+
 function aiAppendMsg(role, text, opts){
   const chat = $("aiChat");
   const wrap = document.createElement('div');
@@ -1364,29 +1961,25 @@ function extractActions(rawText, executed){
   return { display: displayLines.join('\n'), newActions };
 }
 
-async function askAI(question){
-  if (!question) return;
-  aiAppendMsg('user', question);
-  const bubble = aiAppendMsg('assistant', '', { typing: true });
+// Ruleaza un singur stream AI intr-un bubble existent. Returneaza textul acumulat.
+async function streamAiInto(bubble, question, model, executed){
   const chat = $("aiChat");
-  const executed = new Set(); // actiuni deja executate in acest turn
-
   const ctx = {
     question,
     seqA: state.slots.A.seq ? { name: state.slots.A.name || 'A', dna: state.slots.A.seq } : null,
     seqB: state.slots.B.seq ? { name: state.slots.B.name || 'B', dna: state.slots.B.seq } : null,
+    model: model || undefined,
   };
-
+  let accum = '';
   try {
     const res = await fetch('/api/ai/ask', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify(ctx),
     });
-    if (!res.ok){ bubble.classList.remove('typing'); bubble.textContent = 'eroare: '+res.status; return; }
+    if (!res.ok){ bubble.classList.remove('typing'); bubble.textContent = 'eroare: '+res.status; return accum; }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-    let accum = '';
     while (true){
       const { done, value } = await reader.read();
       if (done) break;
@@ -1423,6 +2016,37 @@ async function askAI(question){
   } catch(e){
     bubble.classList.remove('typing');
     bubble.textContent = 'eroare retea: '+e.message;
+  }
+  return accum;
+}
+
+function appendHandoffChip(reason, target){
+  const chat = $("aiChat");
+  const chip = document.createElement('div');
+  chip.className = 'ai-action-chip ai-handoff-chip';
+  chip.innerHTML = `⇆ <b>hybrid:</b> ${esc(reason)} → fallback <b>${esc(target)}</b>`;
+  chat.appendChild(chip);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function askAI(question){
+  if (!question) return;
+  aiAppendMsg('user', question);
+  const executed = new Set();
+
+  const primaryModel = aiSelectedModel;
+  const primaryBubble = aiAppendMsg('assistant', '', { typing: true });
+  const primaryText = await streamAiInto(primaryBubble, question, primaryModel, executed);
+
+  // Hybrid fallback: declanseaza pentru Claude / Codex / Grok (modele care pot refuza)
+  const isPrimaryCensored = primaryModel && (primaryModel.startsWith('claude:') || primaryModel.startsWith('codex:') || primaryModel.startsWith('grok:'));
+  if (aiHybrid && isPrimaryCensored && aiHybridModel && detectRefusal(primaryText)){
+    const provider = primaryModel.startsWith('claude:') ? 'Claude' : (primaryModel.startsWith('grok:') ? 'Grok' : 'Codex');
+    logEvt(`hybrid: ${provider} pare ca refuza — retry pe `+aiHybridModel, 'info');
+    appendHandoffChip(`${provider} a refuzat`, aiHybridModel);
+    const fbBubble = aiAppendMsg('assistant', '', { typing: true });
+    fbBubble.dataset.hybridFallback = '1';
+    await streamAiInto(fbBubble, question, aiHybridModel, executed);
   }
 }
 
@@ -1722,34 +2346,218 @@ function openHelp(){
 }
 $("btnHelp").addEventListener("click", openHelp);
 
-// ====== Demo automat ======
+// ====== Demo automat — tur complet aleator ======
+function _pickRandom(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+
+function _findFirstCrisprGuide(seq){
+  for (let i = 0; i + 23 <= seq.length; i++){
+    const pam = seq.substr(i + 20, 3);
+    if (pam[1] === 'G' && pam[2] === 'G') return seq.substr(i, 20);
+  }
+  return null;
+}
+
 async function runDemo(){
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  logEvt('═══ Demo automat: HBB normala vs mutanta falciforma ═══', 'info');
+  const presetKeys = Object.keys(PRESET_GENES);
+  // alege un preset cu seq >= 100 bp pentru A (ca toate uneltele sa functioneze)
+  const longA = presetKeys.filter(k => PRESET_GENES[k].seq.length >= 100);
+  const pickA = _pickRandom(longA.length ? longA : presetKeys);
+  // pentru B alegem un preset diferit (pereche logica daca exista, altfel random)
+  let pickB;
+  if (pickA === 'hbb_normal') pickB = 'hbb_sickle';
+  else if (pickA === 'hbb_sickle') pickB = 'hbb_normal';
+  else pickB = _pickRandom(presetKeys.filter(k => k !== pickA));
+
+  const nameA = PRESET_GENES[pickA].name;
+  const nameB = PRESET_GENES[pickB].name;
+  const seqLenA = PRESET_GENES[pickA].seq.length;
+
+  logEvt(`═══ DEMO COMPLET pe ${nameA} (${seqLenA} bp) ═══`, 'info');
   $("btnDemoAuto").disabled = true;
+  const totalSteps = 15;
+  const step = (n, msg) => logEvt(`PAS ${n}/${totalSteps}: ${msg}`, 'info');
+
   try {
-    // PAS 1: HBB normala in Slot A
-    setActiveSlot('A'); await sleep(300);
-    logEvt('PAS 1/6: incarc HBB normala in Slot A', 'info'); await sleep(500);
-    setSequence(PRESET_GENES.hbb_normal.seq, 'HBB normala', 'ok'); await sleep(1600);
-    // PAS 2: Transcrie + Traducere
-    logEvt('PAS 2/6: transcriu + traduc', 'info'); await sleep(500);
-    doTranscribe(); await sleep(800); doTranslate(); await sleep(1600);
-    // PAS 3: HBB falciforma in Slot B
-    setActiveSlot('B'); await sleep(300);
-    logEvt('PAS 3/6: incarc HBB falciforma in Slot B', 'info'); await sleep(500);
-    setSequence(PRESET_GENES.hbb_sickle.seq, 'HBB falciforma (sickle)', 'ok'); await sleep(1600);
-    doTranslate(); await sleep(1200);
-    // PAS 4: Comparatie A↔B
-    logEvt('PAS 4/6: compar A ↔ B', 'info'); await sleep(500);
-    renderCompare(); await sleep(2200);
-    // PAS 5: Intrebare AI
-    logEvt('PAS 5/6: intreb AI sa explice diferentele', 'info'); await sleep(400);
-    askAI('Explica-mi diferenta dintre secventa A (normala) si B (falciforma) si ce efect are asupra proteinei.');
-    await sleep(800);
-    // PAS 6: revin la slotul A
-    setActiveSlot('A');
-    logEvt('═══ Demo terminat. Vezi raspunsul AI din dreapta. ═══', 'info');
+    // 1. Incarca preset A
+    setActiveSlot('A'); await sleep(200);
+    step(1, `incarc ${nameA} in Slot A`);
+    setSequence(PRESET_GENES[pickA].seq, nameA, 'ok');
+    await sleep(1200);
+
+    // 2. AI intro despre gena
+    step(2, 'AI: explica gena');
+    askAI(`Prezinta-mi pe scurt gena/secventa "${nameA}" — ce face, unde se gaseste, ce e interesant. Maxim 3 propozitii, fara introduceri.`);
+    await sleep(500);
+
+    // 3. Transcrie + Traduce
+    step(3, 'transcrie ADN → ARN');
+    doTranscribe(); await sleep(1000);
+    step(4, 'traduce → proteina');
+    doTranslate(); await sleep(1400);
+
+    // 4. SeqVerify
+    step(5, 'verifica integritate (SeqVerify)');
+    doVerify(); await sleep(1800);
+
+    // 5. ANDES anomaly scan (daca seq >= 60 bp)
+    if (state.seq.length >= 60){
+      step(6, 'ANDES — scan anomalii nesupervizat (FDA)');
+      const win = Math.max(25, Math.min(60, Math.floor(state.seq.length/25)));
+      const r = BIO.andesAnalyze(state.seq, {
+        window: win,
+        step: Math.max(1, Math.floor(win/6)),
+        threshold: 2.0,
+      });
+      if (r.ok){
+        andesState.result = r;
+        andesState.filter = 'all';
+        renderAndes();
+      } else {
+        logEvt('ANDES: '+r.reason, 'info');
+      }
+      await sleep(2400);
+    } else {
+      step(6, 'ANDES skip — secventa <60 bp');
+      await sleep(400);
+    }
+
+    // 6. Synsor (daca seq >= 100 bp)
+    if (state.seq.length >= 100){
+      step(7, 'Synsor — engineered vs natural');
+      runSynsor();
+      await sleep(2400);
+    } else {
+      step(7, 'Synsor skip — secventa <100 bp');
+      await sleep(400);
+    }
+
+    // 7. Stegano: ENCODE un mesaj fun + SCAN
+    step(8, 'Cod secret — encodez "LAB 2026" in Base-4');
+    const stegoMsg = 'LAB 2026';
+    stegoState.lastEncoded = BIO.encodeBase4(stegoMsg);
+    stegoState.scheme = 'base-4';
+    stegoState.lastScan = BIO.steganoScan(state.seq, { minLen: 6, minScore: 1.5 });
+    renderStegoResults();
+    logEvt(`stego: "${stegoMsg}" → ${stegoState.lastEncoded} (${stegoState.lastEncoded.length} bp)`, 'crispr');
+    await sleep(2200);
+
+    // 8. AI: rezuma analizele
+    step(9, 'AI: rezuma analizele nesupervizate');
+    askAI(`Pe baza analizei ${nameA}: scor SeqVerify, anomalii ANDES, P(engineered) Synsor — ce ar trebui sa retina un student? In 2-3 propozitii.`);
+    await sleep(500);
+
+    // 9. Incarca B + traduce + compara
+    step(10, `incarc ${nameB} in Slot B + comparatie A↔B`);
+    setActiveSlot('B'); await sleep(200);
+    setSequence(PRESET_GENES[pickB].seq, nameB, 'ok'); await sleep(900);
+    doTranslate(); await sleep(800);
+    setActiveSlot('A'); await sleep(200);
+    renderCompare();
+    await sleep(2400);
+
+    // 10. CRISPR — gaseste ghid valid si aplica
+    step(11, 'CRISPR — gasesc ghid 20bp + PAM NGG');
+    const guide = _findFirstCrisprGuide(state.seq);
+    if (guide){
+      const r = BIO.crisprCut(state.seq, guide, 'knockout', '');
+      if (r.ok){
+        const hit = r.applied;
+        state.highlights = [
+          { start: hit.start, len: 20, cls: 'target' },
+          { start: hit.pam,   len: 3,  cls: 'pam' },
+          { start: hit.cut,   len: 1,  cls: 'cut' },
+        ];
+        renderAll();
+        logEvt(`CRISPR: ghid ${guide} la poz ${hit.start} fir ${hit.strand}`, 'crispr');
+        await sleep(1800);
+
+        // 11. Off-target cu acelasi ghid
+        step(12, 'Off-target (GUIDE-seq pipeline)');
+        const ot = BIO.findOffTargets(state.seq, guide, {
+          maxMismatches: 4, allowBulges: true, includeNAG: true,
+        });
+        if (ot.ok){
+          offState.result = ot;
+          offState.filter = 'all';
+          renderOffTarget();
+          logEvt(`Off-target: ${ot.stats.total} site-uri (${ot.stats.onTarget} on, ${ot.stats.high} HIGH)`, 'crispr');
+        }
+        await sleep(2400);
+      } else {
+        logEvt('CRISPR: '+r.reason, 'info');
+        await sleep(400);
+      }
+    } else {
+      logEvt('Niciun PAM NGG gasit pentru CRISPR demo', 'info');
+      await sleep(400);
+    }
+
+    // 12. PCR — primer fwd = primii 18bp, rev = RC al ultimilor 18bp
+    if (state.seq.length >= 40){
+      step(13, 'PCR — amplificare cap-coada');
+      const fwd = state.seq.substr(0, 18);
+      const revRC = BIO.reverseComplement(state.seq.substr(-18));
+      const res = BIO.pcr(state.seq, fwd, revRC);
+      if (res.ok){
+        state.highlights = [{ start: res.startF, len: res.endR - res.startF, cls: 'hl' }];
+        state.fragments = [res.amplicon];
+        renderAll(); renderGel([res.amplicon]);
+        logEvt(`PCR amplicon: ${res.amplicon.length} bp`, 'ok');
+      }
+      await sleep(1600);
+    } else {
+      step(13, 'PCR skip — secventa <40 bp');
+      await sleep(300);
+    }
+
+    // 13. Restriction — incearca enzime pana gaseste una care taie
+    step(14, 'Digestie cu enzime de restrictie');
+    const enzNames = Object.keys(RESTRICTION_ENZYMES);
+    for (const enzName of enzNames){
+      const r = BIO.cutWithEnzyme(state.seq, enzName);
+      if (r.sites.length){
+        state.highlights = r.sites.map(s => ({ start: s.start, len: r.enzyme.site.length, cls: 'target' }))
+          .concat(r.sites.map(s => ({ start: s.cut, len: 1, cls: 'cut' })));
+        state.fragments = r.fragments;
+        renderAll(); renderGel(r.fragments);
+        logEvt(`${enzName} (${r.enzyme.site}): ${r.sites.length} site-uri, ${r.fragments.length} fragmente`, 'ok');
+        break;
+      }
+    }
+    await sleep(2200);
+
+    // 14. ANDES-VCF bonus (fetch CEU22.vcf, ruleaza pipeline real)
+    step(15, 'ANDES-VCF — pipeline real pe CEU22.vcf (1000 Genomes)');
+    try {
+      logEvt('descarcat CEU22.vcf...', 'info');
+      const vcfRes = await fetch('https://raw.githubusercontent.com/riakanjilal/ANDES/main/CEU22.vcf');
+      if (vcfRes.ok){
+        const vcfText = await vcfRes.text();
+        const r = await fetch('/api/andes/vcf', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ vcf: vcfText, p_threshold: 1e-3 })
+        });
+        const j = await r.json();
+        if (j.ok){
+          andesVcfState.result = j;
+          andesVcfState.filter = 'M';
+          renderAndesVcf();
+          logEvt(`ANDES-VCF: ${j.n_snps} SNPs, ${j.n_samples} samples, ${j.anomalies_M.length} anom MD-M`, 'crispr');
+        }
+      }
+    } catch(e){
+      logEvt('ANDES-VCF demo skip: '+e.message, 'info');
+    }
+    await sleep(2200);
+
+    // Final AI summary
+    askAI(`Tocmai am facut un tur complet al laboratorului pe ${nameA}. Am rulat: transcriere, traducere, SeqVerify, ANDES, Synsor, scan stegano, comparatie cu ${nameB}, CRISPR + off-target, PCR, digestie restrictie, plus ANDES-VCF pe 99 indivizi din 1000 Genomes. Rezuma in 4 propozitii cea mai surprinzatoare/educativa observatie din acest tur. Fara introduceri.`);
+
+    logEvt('═══ DEMO TERMINAT — vezi panoul AI din dreapta pentru sinteza ═══', 'ok');
+  } catch(e){
+    logEvt('Demo eroare: '+e.message, 'err');
   } finally {
     $("btnDemoAuto").disabled = false;
   }

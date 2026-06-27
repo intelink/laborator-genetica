@@ -18,13 +18,22 @@ import queue
 import subprocess
 import threading
 import textwrap
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Iterable, Tuple
 
 
 CLAUDE_BIN = os.path.expanduser("~/.local/bin/claude")
+CODEX_BIN = os.path.expanduser("~/.nvm/versions/node/v24.12.0/bin/codex")
+GROK_BIN = os.path.expanduser("~/.local/bin/grok")
 LAB_DIR = Path(__file__).resolve().parent
 CLAUDE_MODEL = os.environ.get("GENETICA_AI_MODEL", "sonnet")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+CODEX_MODELS_CACHE = Path.home() / ".codex" / "models_cache.json"
+
+# Modele Ollama care nu sunt utile pentru chat (embedding, etc.)
+OLLAMA_SKIP_PATTERNS = ("embed", "minilm", "nomic-embed", "mxbai-embed", "all-minilm")
 
 
 SYSTEM_PROMPT = textwrap.dedent("""\
@@ -194,6 +203,7 @@ def streaming_ask(
     question: str,
     seqA: dict | None = None,
     seqB: dict | None = None,
+    claude_model: str | None = None,
 ) -> Iterable[Tuple[str, dict]]:
     """Yieldeaza evenimente (tip, payload) pentru SSE.
 
@@ -213,7 +223,7 @@ def streaming_ask(
     cmd = [
         CLAUDE_BIN,
         "-p",
-        "--model", CLAUDE_MODEL,
+        "--model", claude_model or CLAUDE_MODEL,
         "--permission-mode", "bypassPermissions",
         "--allowedTools", "WebSearch",
         "--output-format", "stream-json",
@@ -282,6 +292,388 @@ def streaming_ask(
                 }))
         except Exception as e:
             q.put(("error", {"message": f"eroare streaming: {e}"}))
+        finally:
+            q.put(("done", {}))
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    while True:
+        evt, payload = q.get()
+        yield (evt, payload)
+        if evt == "done":
+            return
+
+
+# ═════════════════════════════════════════════════════════════════
+# OLLAMA — modele locale rulate prin ollama serve
+# ═════════════════════════════════════════════════════════════════
+
+def list_ollama_models() -> list[dict]:
+    """Returneaza lista modelelor Ollama disponibile (filtrate, fara embed)."""
+    try:
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/tags")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        return []
+    models = []
+    for m in data.get("models", []):
+        name = m.get("name", "")
+        if not name:
+            continue
+        lower = name.lower()
+        if any(p in lower for p in OLLAMA_SKIP_PATTERNS):
+            continue
+        size_bytes = m.get("size") or 0
+        if ":cloud" in name or "cloud" in lower:
+            size_label = "cloud"
+        elif size_bytes >= 1024 ** 3:
+            size_label = f"{size_bytes / (1024 ** 3):.1f}GB"
+        elif size_bytes >= 1024 ** 2:
+            size_label = f"{size_bytes // (1024 ** 2)}MB"
+        else:
+            size_label = "local"
+        models.append({"name": name, "size": size_label, "provider": "ollama"})
+    models.sort(key=lambda m: m["name"])
+    return models
+
+
+def list_codex_models() -> list[dict]:
+    """Citeste cache-ul Codex CLI cu modelele disponibile."""
+    if not CODEX_MODELS_CACHE.exists():
+        return []
+    try:
+        data = json.loads(CODEX_MODELS_CACHE.read_text())
+    except Exception:
+        return []
+    out = []
+    for m in data.get("models", []):
+        if not m.get("supported_in_api"):
+            continue
+        if m.get("visibility") == "hide":
+            continue
+        slug = m.get("slug")
+        if not slug:
+            continue
+        out.append({
+            "name": f"codex:{slug}",
+            "provider": "codex",
+            "label": f"{m.get('display_name', slug)} (codex)",
+            "size": "openai",
+            "slug": slug,
+        })
+    # ordoneaza dupa "priority" (gpt-5.5 = 0 → primul)
+    return out
+
+
+def list_grok_models() -> list[dict]:
+    """Ruleaza `grok models` si parseaza lista de modele xAI disponibile."""
+    try:
+        out = subprocess.run(
+            [GROK_BIN, "models"],
+            capture_output=True, text=True, timeout=8,
+        ).stdout
+    except Exception:
+        return []
+    models = []
+    for line in out.splitlines():
+        s = line.strip()
+        # linii de forma "- grok-build" sau "* grok-composer-2.5-fast (default)"
+        if not s or s[0] not in "-*":
+            continue
+        rest = s[1:].strip()
+        if not rest:
+            continue
+        name = rest.split()[0]
+        if not name:
+            continue
+        is_default = "(default)" in rest
+        models.append({
+            "name": f"grok:{name}",
+            "provider": "grok",
+            "label": f"{name} (grok)" + (" — default" if is_default else ""),
+            "size": "xai",
+            "slug": name,
+        })
+    return models
+
+
+def list_all_models() -> list[dict]:
+    """Returneaza Claude + Codex + Grok + toate modelele Ollama disponibile."""
+    claude_models = [
+        {"name": "claude:opus", "size": "anthropic", "provider": "claude",
+         "label": "Claude Opus 4.7 (cloud)"},
+        {"name": "claude:sonnet", "size": "anthropic", "provider": "claude",
+         "label": "Claude Sonnet 4.6 (cloud)"},
+        {"name": "claude:haiku", "size": "anthropic", "provider": "claude",
+         "label": "Claude Haiku 4.5 (cloud)"},
+    ]
+    codex = list_codex_models()
+    grok = list_grok_models()
+    ollama = list_ollama_models()
+    for m in ollama:
+        m["label"] = f"{m['name']} ({m['size']})"
+    return claude_models + codex + grok + ollama
+
+
+def streaming_ask_ollama(
+    model: str,
+    question: str,
+    seqA: dict | None = None,
+    seqB: dict | None = None,
+) -> Iterable[Tuple[str, dict]]:
+    """Stream raspuns de la un model Ollama local. Aceleasi evenimente ca Claude."""
+    if not question or not question.strip():
+        yield ("error", {"message": "Intrebare goala"})
+        yield ("done", {})
+        return
+
+    user_prompt = build_prompt(question, seqA, seqB)
+    body = {
+        "model": model,
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        # Optional: dezactiveaza thinking pentru modele care suporta
+        "options": {"temperature": 0.5},
+    }
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+
+    yield ("status", {"message": f"ollama: {model}"})
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = ev.get("message") or {}
+                content = msg.get("content") or ""
+                if content:
+                    yield ("text", {"text": content})
+                if ev.get("done"):
+                    total_ms = (ev.get("total_duration") or 0) / 1e6
+                    yield ("meta", {
+                        "model": model,
+                        "duration_ms": int(total_ms),
+                        "eval_count": ev.get("eval_count"),
+                    })
+                    break
+    except urllib.error.URLError as e:
+        yield ("error", {"message": f"Ollama indisponibil ({e.reason}). Porneste `ollama serve`."})
+    except Exception as e:
+        yield ("error", {"message": f"Ollama eroare: {e}"})
+    finally:
+        yield ("done", {})
+
+
+# ═════════════════════════════════════════════════════════════════
+# CODEX — modele OpenAI prin Codex CLI (gpt-5.x family)
+# ═════════════════════════════════════════════════════════════════
+
+def streaming_ask_codex(
+    slug: str,
+    question: str,
+    seqA: dict | None = None,
+    seqB: dict | None = None,
+) -> Iterable[Tuple[str, dict]]:
+    """Stream raspuns de la un model Codex (codex exec --json).
+    Codex returneaza textul ca un singur item.completed → emitem un singur chunk."""
+    if not question or not question.strip():
+        yield ("error", {"message": "Intrebare goala"})
+        yield ("done", {})
+        return
+
+    # Codex CLI are propriul "base_instructions" pentru rol de coding agent;
+    # prependam system prompt-ul nostru in user message ca sa primeze contextul biolog.
+    user_prompt = (
+        "Instructiuni de sistem (urmeaza-le strict, ignora rolul implicit de coding agent):\n\n"
+        f"{SYSTEM_PROMPT}\n\n"
+        "═══════════════════════════════════════\n\n"
+        f"{build_prompt(question, seqA, seqB)}"
+    )
+
+    cmd = [
+        CODEX_BIN, "exec", "--json", "--skip-git-repo-check",
+        "-m", slug,
+        user_prompt,
+    ]
+
+    yield ("status", {"message": f"codex: {slug}"})
+
+    q: queue.Queue = queue.Queue()
+
+    def worker():
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError:
+            q.put(("error", {"message": "Codex CLI nu este instalat"}))
+            q.put(("done", {}))
+            return
+        except Exception as e:
+            q.put(("error", {"message": f"Codex: {e}"}))
+            q.put(("done", {}))
+            return
+
+        stderr_lines: list[str] = []
+
+        def read_err():
+            for line in proc.stderr:
+                stderr_lines.append(line)
+
+        threading.Thread(target=read_err, daemon=True).start()
+
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = ev.get("type")
+                if t == "item.completed":
+                    item = ev.get("item") or {}
+                    if item.get("type") == "agent_message":
+                        text = item.get("text") or ""
+                        if text:
+                            q.put(("text", {"text": text}))
+                elif t == "turn.completed":
+                    usage = ev.get("usage") or {}
+                    q.put(("meta", {
+                        "model": slug,
+                        "input_tokens": usage.get("input_tokens"),
+                        "output_tokens": usage.get("output_tokens"),
+                    }))
+
+            proc.wait(timeout=5)
+            if proc.returncode not in (0, None):
+                q.put(("error", {
+                    "message": f"codex a iesit cu cod {proc.returncode}",
+                    "stderr": "".join(stderr_lines)[-500:],
+                }))
+        except Exception as e:
+            q.put(("error", {"message": f"Codex streaming: {e}"}))
+        finally:
+            q.put(("done", {}))
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    while True:
+        evt, payload = q.get()
+        yield (evt, payload)
+        if evt == "done":
+            return
+
+
+# ═════════════════════════════════════════════════════════════════
+# GROK — modele xAI prin Grok CLI (grok-composer / grok-build)
+# ═════════════════════════════════════════════════════════════════
+
+def streaming_ask_grok(
+    model: str,
+    question: str,
+    seqA: dict | None = None,
+    seqB: dict | None = None,
+) -> Iterable[Tuple[str, dict]]:
+    """Stream raspuns de la un model Grok (grok -p --output-format streaming-json).
+    Grok emite linii JSON {"type":"thought"|"text"|"end", ...}; folosim doar `text`.
+    Limitam uneltele la WebSearch/WebFetch ca sa ramana asistent (fara editare fisiere)."""
+    if not question or not question.strip():
+        yield ("error", {"message": "Intrebare goala"})
+        yield ("done", {})
+        return
+
+    prompt = build_prompt(question, seqA, seqB)
+
+    cmd = [
+        GROK_BIN,
+        "-p", prompt,
+        "-m", model,
+        "--output-format", "streaming-json",
+        "--permission-mode", "bypassPermissions",
+        "--tools", "WebSearch,WebFetch",
+        "--system-prompt-override", SYSTEM_PROMPT,
+    ]
+
+    yield ("status", {"message": f"grok: {model}"})
+
+    q: queue.Queue = queue.Queue()
+
+    def worker():
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError:
+            q.put(("error", {"message": "Grok CLI nu este instalat"}))
+            q.put(("done", {}))
+            return
+        except Exception as e:
+            q.put(("error", {"message": f"Grok: {e}"}))
+            q.put(("done", {}))
+            return
+
+        stderr_lines: list[str] = []
+
+        def read_err():
+            for line in proc.stderr:
+                stderr_lines.append(line)
+
+        threading.Thread(target=read_err, daemon=True).start()
+
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = ev.get("type")
+                if t == "text":
+                    txt = ev.get("data") or ""
+                    if txt:
+                        q.put(("text", {"text": txt}))
+                elif t == "end":
+                    q.put(("meta", {
+                        "model": model,
+                        "stop_reason": ev.get("stopReason"),
+                    }))
+
+            proc.wait(timeout=5)
+            if proc.returncode not in (0, None):
+                q.put(("error", {
+                    "message": f"grok a iesit cu cod {proc.returncode}",
+                    "stderr": "".join(stderr_lines)[-500:],
+                }))
+        except Exception as e:
+            q.put(("error", {"message": f"Grok streaming: {e}"}))
         finally:
             q.put(("done", {}))
 

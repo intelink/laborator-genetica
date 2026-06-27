@@ -13,7 +13,17 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
-from asistent import streaming_ask, CLAUDE_BIN, LAB_DIR
+from asistent import (
+    streaming_ask,
+    streaming_ask_ollama,
+    streaming_ask_codex,
+    streaming_ask_grok,
+    list_all_models,
+    CLAUDE_BIN,
+    CLAUDE_MODEL,
+    LAB_DIR,
+)
+from andes_vcf import run_andes_vcf
 
 APP_DIR = Path(__file__).resolve().parent
 PUBLIC = APP_DIR / "public"
@@ -46,18 +56,41 @@ def health():
     return jsonify({"ok": True, "port": PORT, "lab": "genetica", "ai": True})
 
 
+@app.route("/api/ai/models")
+def ai_models():
+    """Lista de modele disponibile pentru asistent: Claude (cloud) + Ollama (local/cloud)."""
+    return jsonify({
+        "models": list_all_models(),
+        "default": f"claude:{CLAUDE_MODEL}",
+    })
+
+
 @app.route("/api/ai/ask", methods=["POST"])
 def ai_ask():
-    """Primeste { question, seqA, seqB } -> SSE stream cu Claude."""
+    """Primeste { question, seqA, seqB, model } -> SSE stream cu Claude sau Ollama."""
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
     seqA = data.get("seqA")
     seqB = data.get("seqB")
+    model = (data.get("model") or f"claude:{CLAUDE_MODEL}").strip()
     if not question:
         return jsonify({"error": "question required"}), 400
 
+    # Dispatch: claude:* → claude, codex:* → codex, grok:* → grok, altceva → Ollama
+    if model.startswith("claude:"):
+        sub_model = model.split(":", 1)[1] or CLAUDE_MODEL
+        stream = streaming_ask(question, seqA, seqB, claude_model=sub_model)
+    elif model.startswith("codex:"):
+        slug = model.split(":", 1)[1]
+        stream = streaming_ask_codex(slug, question, seqA, seqB)
+    elif model.startswith("grok:"):
+        slug = model.split(":", 1)[1]
+        stream = streaming_ask_grok(slug, question, seqA, seqB)
+    else:
+        stream = streaming_ask_ollama(model, question, seqA, seqB)
+
     def gen():
-        for evt, payload in streaming_ask(question, seqA, seqB):
+        for evt, payload in stream:
             yield f"event: {evt}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     return Response(
@@ -209,6 +242,30 @@ def lab_build():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/andes/vcf", methods=["POST"])
+def andes_vcf_endpoint():
+    """ANDES-VCF: pipeline complet pe text VCF (multi-sample SNPs)."""
+    data = request.get_json(silent=True) or {}
+    vcf = (data.get("vcf") or "").strip()
+    if not vcf:
+        # accepta si raw body (text/plain)
+        vcf = (request.data or b"").decode("utf-8", errors="replace").strip()
+    if not vcf:
+        return jsonify({"ok": False, "reason": "VCF text gol"}), 400
+    try:
+        p_thresh = float(data.get("p_threshold", 1e-3))
+    except Exception:
+        p_thresh = 1e-3
+    try:
+        result = run_andes_vcf(vcf, p_threshold=p_thresh)
+    except ValueError as e:
+        return jsonify({"ok": False, "reason": str(e)}), 400
+    except Exception as e:
+        log.exception("ANDES-VCF failed")
+        return jsonify({"ok": False, "reason": f"eroare interna: {e}"}), 500
+    return jsonify(result)
 
 
 if __name__ == "__main__":
